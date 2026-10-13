@@ -79,6 +79,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
     devDependencies:
+      '@types/node':
+        specifier: ^22
+        version: 22.20.5
       '@void-monorepo/config':
         specifier: workspace:*
         version: link:../../packages/config
@@ -156,9 +159,6 @@ importers:
 
   packages/auth:
     dependencies:
-      '@void-monorepo/db':
-        specifier: workspace:*
-        version: link:../db
       '@void-monorepo/types':
         specifier: workspace:*
         version: link:../types
@@ -196,9 +196,6 @@ importers:
 
   packages/flow:
     dependencies:
-      '@void-monorepo/types':
-        specifier: workspace:*
-        version: link:../types
       drizzle-orm:
         specifier: ^0.39.1
         version: 0.39.3
