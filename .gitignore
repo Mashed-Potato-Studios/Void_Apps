@@ -10,6 +10,9 @@ dist/
 # Turborepo
 .turbo/
 
+# Agent execution scratch (ledger, briefs, review packages)
+.superpowers/
+
 # Environment Variables & Secrets
 .env
 .env.*
