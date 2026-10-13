@@ -1,0 +1,10 @@
+{
+  "extends": "@void-monorepo/config/tsconfig/package.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext"
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

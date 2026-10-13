@@ -19,6 +19,7 @@
     { "path": "./packages/ui" },
     { "path": "./packages/api-client" },
     { "path": "./packages/flow" },
+    { "path": "./packages/void-fingerprint" },
     { "path": "./apps/web" },
     { "path": "./apps/api" },
     { "path": "./apps/admin" }
