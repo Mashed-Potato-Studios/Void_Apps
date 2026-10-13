@@ -13,6 +13,7 @@ Spec for new OSS DX package delivering stable app Fingerprint for Void apps — 
 ## Decisions so far
 
 - [Void inference scanner internals](https://github.com/titan-65/Void_Apps/issues/2): reuse Void resolution order + specifier/env table; repo standard-mode, legacy void.json, zero live void imports; grammar + migration caveats into #5/#7.
+- [Vite+ and voidPlugin hook points](https://github.com/titan-65/Void_Apps/issues/3): pure-lib emitter + thin plugin after voidPlugin(), buildStart/writeBundle, dev gated; Turbo tasks for CI; no vite-plus in repo yet, no upstream Vite+ changes.
 
 ## Not yet specified
 
