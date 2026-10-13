@@ -53,6 +53,40 @@ describe("diffManifest", () => {
       clearBaseline();
     }
   });
+  it("reports config-field drift with source-file evidence", () => {
+    writeBaseline();
+    const voidJsonPath = join(appRoot, "void.json");
+    const orig = readFileSync(voidJsonPath, "utf8");
+    try {
+      writeFileSync(
+        voidJsonPath,
+        JSON.stringify({ $schema: "https://void.cloud/schema.json", target: "cloudflare", region: "eu" }),
+      );
+      const d = diffManifest(appRoot);
+      assert.equal(d.clean, false);
+      assert.deepEqual(d.changed.map((c) => c.path), ["voidJson"]);
+      assert.equal(d.changed[0].evidence, "void.json");
+    } finally {
+      writeFileSync(voidJsonPath, orig);
+      clearBaseline();
+    }
+  });
+  it("reports added binding tokens with file:line evidence", () => {
+    writeBaseline();
+    const route = join(appRoot, "routes/hello.ts");
+    const orig = readRoute();
+    try {
+      writeFileSync(route, orig + "const t = env.NEWBIND;\n");
+      const d = diffManifest(appRoot);
+      assert.equal(d.clean, false);
+      const token = d.changed.find((c) => c.path === "bindings:NEWBIND");
+      assert.ok(token);
+      assert.match(token?.evidence ?? "", /^routes\/hello\.ts:\d+$/);
+    } finally {
+      writeFileSync(route, orig);
+      clearBaseline();
+    }
+  });
   it("treats missing baseline as new, never throws", () => {
     clearBaseline();
     const d = diffManifest(appRoot);

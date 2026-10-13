@@ -1,7 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, relative } from "node:path";
+import { canonical } from "./canonical.ts";
 import { buildManifest, type EmitOptions } from "./manifest.ts";
+import type { Bindings } from "./scan.ts";
 import type { FileEntry } from "./scan.ts";
 
 export type ChangedEntry = {
@@ -40,6 +42,54 @@ function readBaselineAtRef(appRoot: string, ref: string): { files?: FileEntry[];
   }
 }
 
+const FIELD_SOURCES: Record<string, string> = {
+  app: "package.json",
+  target: "void.json",
+  voidJson: "void.json",
+  plugins: "vite.config.ts",
+  workspaceDeps: "package.json",
+};
+
+function tokenPattern(token: string): RegExp {
+  const esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (token.startsWith("void/")) return new RegExp(esc);
+  return new RegExp(`env\\.${esc}\\b|env\\[["']${esc}["']\\]`);
+}
+
+export function locateToken(
+  appRoot: string,
+  files: FileEntry[],
+  token: string,
+): string | undefined {
+  const re = tokenPattern(token);
+  for (const f of files) {
+    const lines = readFileSync(join(appRoot, f.path), "utf8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      if (re.test(lines[i])) return `${f.path}:${i + 1}`;
+    }
+  }
+  return undefined;
+}
+
+function bindingTokenEntries(
+  appRoot: string,
+  files: FileEntry[],
+  prev: Bindings | undefined,
+  next: Bindings,
+): ChangedEntry[] {
+  const out: ChangedEntry[] = [];
+  const before = new Set([...(prev?.specifiers ?? []), ...(prev?.envAccess ?? [])]);
+  const after = new Set([...next.specifiers, ...next.envAccess]);
+  for (const t of [...after].filter((t) => !before.has(t)).sort()) {
+    const evidence = locateToken(appRoot, files, t);
+    out.push({ path: `bindings:${t}`, from: null, to: "present", ...(evidence ? { evidence } : {}) });
+  }
+  for (const t of [...before].filter((t) => !after.has(t)).sort()) {
+    out.push({ path: `bindings:${t}`, from: "present", to: null });
+  }
+  return out;
+}
+
 export function diffManifest(appRoot: string, opts: EmitOptions = {}): DiffResult {
   const current = buildManifest(appRoot, opts);
   let disk: { files?: FileEntry[]; fingerprint?: string } | null = null;
@@ -72,6 +122,26 @@ export function diffManifest(appRoot: string, opts: EmitOptions = {}): DiffResul
   }
   for (const p of prev.keys()) {
     if (!seen.has(p)) changed.push({ path: p, from: prev.get(p) ?? null, to: null, evidence: p });
+  }
+  const diskRec = disk as unknown as Record<string, unknown>;
+  const curRec = current as unknown as Record<string, unknown>;
+  for (const [field, source] of Object.entries(FIELD_SOURCES)) {
+    if (canonical(diskRec[field] ?? null) !== canonical(curRec[field] ?? null)) {
+      changed.push({
+        path: field,
+        from: canonical(diskRec[field] ?? null).trim(),
+        to: canonical(curRec[field] ?? null).trim(),
+        evidence: source,
+      });
+    }
+  }
+  for (const e of bindingTokenEntries(
+    appRoot,
+    current.files,
+    diskRec["bindings"] as Bindings | undefined,
+    current.bindings,
+  )) {
+    changed.push(e);
   }
   changed.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
   const committed = disk.fingerprint ?? null;

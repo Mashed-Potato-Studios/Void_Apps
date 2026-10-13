@@ -37,7 +37,7 @@ function parsePlugins(appRoot: string): string[] {
     return [];
   }
   const arrayBody = src.match(/plugins\s*:\s*\[(.*?)\]/s)?.[1] ?? "";
-  return [...arrayBody.matchAll(/(\w+)\(\)/g)].map((m) => m[1]);
+  return [...arrayBody.matchAll(/(\w+)\s*\(/g)].map((m) => m[1]);
 }
 
 export function manifestFingerprint(m: Omit<Manifest, "fingerprint">): string {

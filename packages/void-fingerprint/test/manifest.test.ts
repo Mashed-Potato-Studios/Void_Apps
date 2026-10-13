@@ -19,6 +19,7 @@ describe("buildManifest", () => {
     assert.deepEqual(m.middleware, ["middleware/auth.ts"]);
     assert.deepEqual(m.bindings.specifiers, ["void/db"]);
     assert.deepEqual(m.workspaceDeps, { "workspace-dep": "workspace:*" });
+    assert.deepEqual(m.plugins, ["voidPlugin", "customPlugin"]);
     assert.equal(m.drizzle, null);
     const { fingerprint } = m;
     assert.match(fingerprint, /^[0-9a-f]{64}$/);
