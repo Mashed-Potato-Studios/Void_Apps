@@ -23,7 +23,7 @@ export type Manifest = {
   fingerprint: string;
 };
 
-export type EmitOptions = { extraPaths?: string[] };
+export type EmitOptions = { extraPaths?: string[]; baseRef?: string };
 
 function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));

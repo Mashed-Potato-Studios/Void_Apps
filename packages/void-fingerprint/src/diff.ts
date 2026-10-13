@@ -1,5 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { readFileSync, realpathSync } from "node:fs";
+import { join, relative } from "node:path";
 import { buildManifest, type EmitOptions } from "./manifest.ts";
 import type { FileEntry } from "./scan.ts";
 
@@ -17,12 +18,41 @@ export type DiffResult = {
   isNew: boolean;
 };
 
+function readBaselineAtRef(appRoot: string, ref: string): { files?: FileEntry[]; fingerprint?: string } {
+  let toplevel: string;
+  try {
+    toplevel = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+      cwd: appRoot,
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    throw new Error(`void-fingerprint: not a git checkout, cannot resolve --base ${ref}`);
+  }
+  const rel = relative(toplevel, join(realpathSync(appRoot), "void.fingerprint.json")).replace(
+    /\\/g,
+    "/",
+  );
+  try {
+    const out = execFileSync("git", ["show", `${ref}:${rel}`], { cwd: appRoot, encoding: "utf8" });
+    return JSON.parse(out) as { files?: FileEntry[]; fingerprint?: string };
+  } catch {
+    throw new Error(`void-fingerprint: cannot read baseline at ${ref} for ${rel}`);
+  }
+}
+
 export function diffManifest(appRoot: string, opts: EmitOptions = {}): DiffResult {
   const current = buildManifest(appRoot, opts);
-  let disk: { files?: FileEntry[]; fingerprint?: string };
-  try {
-    disk = JSON.parse(readFileSync(join(appRoot, "void.fingerprint.json"), "utf8"));
-  } catch {
+  let disk: { files?: FileEntry[]; fingerprint?: string } | null = null;
+  if (opts.baseRef) {
+    disk = readBaselineAtRef(appRoot, opts.baseRef);
+  } else {
+    try {
+      disk = JSON.parse(readFileSync(join(appRoot, "void.fingerprint.json"), "utf8"));
+    } catch {
+      disk = null;
+    }
+  }
+  if (disk === null) {
     return {
       clean: false,
       changed: current.files.map((f) => ({ path: f.path, from: null, to: f.sha256 })),
