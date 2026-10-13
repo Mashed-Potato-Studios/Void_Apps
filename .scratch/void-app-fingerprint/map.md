@@ -16,17 +16,13 @@ Spec for new OSS DX package delivering stable app Fingerprint for Void apps — 
 - [Vite+ and voidPlugin hook points](https://github.com/titan-65/Void_Apps/issues/3): pure-lib emitter + thin plugin after voidPlugin(), buildStart/writeBundle, dev gated; Turbo tasks for CI; no vite-plus in repo yet, no upstream Vite+ changes.
 - [Monorepo app and resource inventory](https://github.com/titan-65/Void_Apps/issues/4): web/api/admin shapes recorded, db touches all apps, no lockfile/migrations/node_modules; workflows/ dir + lockfile policy open into #5.
 - [Manifest schema and hash rules](https://github.com/titan-65/Void_Apps/issues/5): full manifest + extra-paths; SHA-256 canonical JSON format v1; committed manifest + generated copy + root graph; void-fingerprint MIT.
-- [CLI, CI check, and monorepo graph UX](https://github.com/titan-65/Void_Apps/issues/6): emit/diff/check --ci/graph; source-only check pre-build; standalone binary via pnpm filter + Turbo; vp run deferred.
+- [CLI, CI check, and monorepo graph UX](https://github.com/titan-65/Void_Apps/issues/6): emit/diff/check --ci/graph; per-app cwd primary + `--all` sugar; committed-manifest baseline + opt-in `--base <ref>`; exit 0/1/2 (clean/drift/tool error); report = per-field delta w/ file:line evidence, `--json` schema; one writer per artifact (emit→committed, plugin writeBundle→`.void/`); graph reads committed manifests only, app→pkg + crossApp edges, mermaid escape hatch; `--ci` = non-TTY + warnings→errors; Turbo `fp:emit/fp:check/fp:graph` all `cache:false`, graph dependsOn check; CI = `fetch-depth:0` + `pnpm run fp:check:all` in validate; scripts `fp:*` shell out to binary; `vp run` deferred.
 - [Fingerprint emitter prototype spike](https://github.com/titan-65/Void_Apps/issues/7): probe validated schema/hash on apps/api (8 files, empty bindings); keep shape, kill probe after map closes.
 
 ## Not yet specified
 
-- Hash stability rules: exact field ordering, exclusions (timestamps, `.void/`, lockfiles), cross-platform normalization.
 - Reuse depth of Void inference internals vs standalone parser; handling of Vue/Svelte files (not directly scanned by Void) and Astro frontmatter.
-- Committed vs generated artifact split (`void.fingerprint.json` vs `.void/fingerprint.json`) and monorepo root graph shape.
-- CLI output formats (human/JSON), exit codes, Turbo + GitHub Actions wiring, `vp` integration surface.
-- Package name/scope, license, publish pipeline; upstream contribution posture toward Void/Vite+.
-- `packages/flow` role: consumer of fingerprint vs home of implementation.
+- Publish pipeline detail (dry-run acceptance exists; registry, provenance, release notes); upstream contribution posture toward Void/Vite+.
 
 ## Out of scope
 

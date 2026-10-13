@@ -14,10 +14,16 @@
 
 - `node >= 22` everywhere (type-stripping runs TS sources and the TS bin with no loader).
 - Erasable TypeScript only: `type`/`interface`/annotations allowed; no `enum`, `namespace`, or parameter properties.
-- Zero runtime dependencies in `packages/fingerprint` (only `devDependencies`: `typescript`, `@void-monorepo/config`).
+- Zero runtime dependencies in `packages/void-fingerprint` (only `devDependencies`: `typescript`, `@void-monorepo/config`).
 - Public name `void-fingerprint`, MIT, version `0.1.0`; internal consumers link via `workspace:*`.
 - Hash: SHA-256 over canonical JSON (recursively sorted keys, `JSON.stringify` + trailing LF), `format: 1`.
-- Baseline for `diff`/`check` is the committed `void.fingerprint.json`, never the build output.
+- Baseline for `diff`/`check` is the committed `void.fingerprint.json`, never the build output; opt-in `--base <git-ref>` compares the working tree against the fingerprint committed at that ref (local/PR-review only, never CI).
+- Exit codes: `0` clean, `1` drift, `2` tool/usage error (drift ≠ crash). With `--all`, one drifting app fails the whole run; report prints per-app sections.
+- One writer per artifact: `emit` writes the committed manifest only; the plugin's `writeBundle` writes `<app>/.void/fingerprint.json` only.
+- `graph` reads committed manifests only — never re-scans (deterministic, offline-cheap). Edges: app → consumed workspace package (name + range) plus `crossApp` marker when one app's manifest lists another app's package.
+- Scripts `fp:emit` / `fp:check` / `fp:graph` per app, root mirrors `fp:check:all` — every script shells out to the binary, never inlines logic. Turbo tasks share those names, all `cache: false`.
+- `check --ci` is presentation + strictness only: non-TTY output (no color, no footer, stable line ordering), warnings promoted to errors (missing committed manifest = exit 2). Drift logic identical local vs CI.
+- Human drift report: compact table, one line per drifted field with evidence (`file:line`) + footer `run pnpm fp:emit to regenerate`. `--json` emits `{app, ok, changed:[{path, from, to, evidence?}], hash:{committed, computed}}`; the full manifest is never dumped into the report.
 - Commits: one per task, conventional prefix (`feat:`, `chore:`, `ci:`).
 
 ## Review Focus
@@ -26,13 +32,13 @@
 - A route file importing `void/db` via `env["DB"]` (bracket-string) instead of `env.DB` is missed by the naive regex — plan pins both forms in the bindings test.
 - `apps/api/workflows/` must be excluded by default and included only via `extraPaths` — plan pins both cases in the scan task test.
 - `diff` on a first-run app with no committed manifest must report the whole manifest as new, not crash — plan pins this in the diff task test.
-- `check --ci` must exit 1 on drift and 0 on clean with no stack trace in either case — plan pins exit codes in the CLI task test.
+- `check --ci` must exit 1 on drift, 0 on clean, 2 on tool/usage error with no stack trace in the clean/drift cases — plan pins exit codes in the CLI task test.
 
 ---
 
 ## File Structure
 
-New package `packages/fingerprint/` (one clear responsibility per file):
+New package `packages/void-fingerprint/` (one clear responsibility per file):
 
 - `package.json` — public metadata, `bin`, `exports` → `dist`, `files`, scripts (`build`, `typecheck`, `test`).
 - `tsconfig.json` — extends `@void-monorepo/config/tsconfig/package.json`, `include: ["src/**/*", "test/**/*"]`.
@@ -53,26 +59,26 @@ New package `packages/fingerprint/` (one clear responsibility per file):
 
 Modified outside the package:
 
-- `turbo.json` — add `test` and `fingerprint:check` tasks.
-- `apps/*/package.json` — add `fingerprint:check` script (bin via workspace dep) + `void-fingerprint` devDependency.
-- `.github/workflows/deploy.yml` — `validate` job gains fingerprint check step after typecheck.
+- `turbo.json` — add `fp:emit`, `fp:check`, `fp:graph` (all `cache: false`) plus a `test` task.
+- `apps/*/package.json` — add `fp:emit` / `fp:check` / `fp:graph` scripts (bin via workspace dep) + `void-fingerprint` devDependency.
+- `.github/workflows/deploy.yml` — `validate` job gains `fetch-depth: 0` on checkout and a fingerprint check step after build.
 - `apps/*/void.fingerprint.json` + `fingerprint.graph.json` — committed dogfood artifacts (Task 8).
-- Root `package.json` — `references` gains `./packages/fingerprint`; root `test` script.
+- Root `package.json` — `references` gains `./packages/void-fingerprint`; root `test` + `fp:check:all` scripts.
 
 ---
 
 ### Task 1: Scaffold the package
 
 **Files:**
-- Create: `packages/fingerprint/package.json`
-- Create: `packages/fingerprint/tsconfig.json`
-- Create: `packages/fingerprint/LICENSE`
-- Create: `packages/fingerprint/src/index.ts`
-- Modify: root `tsconfig.json` (`references` += `{ "path": "./packages/fingerprint" }`)
+- Create: `packages/void-fingerprint/package.json`
+- Create: `packages/void-fingerprint/tsconfig.json`
+- Create: `packages/void-fingerprint/LICENSE`
+- Create: `packages/void-fingerprint/src/index.ts`
+- Modify: root `tsconfig.json` (`references` += `{ "path": "./packages/void-fingerprint" }`)
 
 **Interfaces:**
 - Consumes: `@void-monorepo/config/tsconfig/package.json` (existing base config).
-- Produces: importable package path `@void-monorepo/fingerprint` → replaced by public name in Task 7 wiring; `src/index.ts` placeholder export `FORMAT = 1 as const` that Task 2–6 extend (never removed).
+- Produces: importable package `void-fingerprint` (public name from day one); `src/index.ts` placeholder export `FORMAT = 1 as const` that Task 2–6 extend (never removed).
 
 - [ ] **Step 1: Write package.json**
 
@@ -156,12 +162,12 @@ SOFTWARE.
 - [ ] **Step 5: Add tsconfig reference**
 
 Run: `pnpm install` then `npx tsc --noEmit -p tsconfig.json`
-Expected: PASS (new empty project typechecks; `references` includes `./packages/fingerprint`).
+Expected: PASS (new empty project typechecks; `references` includes `./packages/void-fingerprint`).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/fingerprint docs/superpowers/specs/void-fingerprint.md tsconfig.json
+git add packages/void-fingerprint docs/superpowers/specs/void-fingerprint.md tsconfig.json
 git commit -m "feat: scaffold void-fingerprint package (spec included)"
 ```
 
@@ -170,8 +176,8 @@ git commit -m "feat: scaffold void-fingerprint package (spec included)"
 ### Task 2: Canonical JSON + hashing
 
 **Files:**
-- Create: `packages/fingerprint/src/canonical.ts`
-- Create: `packages/fingerprint/test/canonical.test.ts`
+- Create: `packages/void-fingerprint/src/canonical.ts`
+- Create: `packages/void-fingerprint/test/canonical.test.ts`
 
 **Interfaces:**
 - Consumes: nothing (leaf module).
@@ -208,7 +214,7 @@ describe("canonical", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test packages/fingerprint/test/canonical.test.ts`
+Run: `node --test packages/void-fingerprint/test/canonical.test.ts`
 Expected: FAIL with "Cannot find module '../src/canonical.ts'".
 
 - [ ] **Step 3: Write minimal implementation**
@@ -245,7 +251,7 @@ export function hashFile(path: string): string {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test packages/fingerprint/test/canonical.test.ts`
+Run: `node --test packages/void-fingerprint/test/canonical.test.ts`
 Expected: PASS (3 subtests).
 
 - [ ] **Step 5: Typecheck**
@@ -256,7 +262,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/fingerprint/src/canonical.ts packages/fingerprint/test/canonical.test.ts
+git add packages/void-fingerprint/src/canonical.ts packages/void-fingerprint/test/canonical.test.ts
 git commit -m "feat: add canonical JSON and LF-normalized file hashing"
 ```
 
@@ -265,13 +271,13 @@ git commit -m "feat: add canonical JSON and LF-normalized file hashing"
 ### Task 3: App scanner (files + bindings)
 
 **Files:**
-- Create: `packages/fingerprint/src/scan.ts`
-- Create: `packages/fingerprint/test/fixtures/demo-app/void.json`
-- Create: `packages/fingerprint/test/fixtures/demo-app/package.json`
-- Create: `packages/fingerprint/test/fixtures/demo-app/routes/hello.ts`
-- Create: `packages/fingerprint/test/fixtures/demo-app/middleware/auth.ts`
-- Create: `packages/fingerprint/test/fixtures/demo-app/workflows/extra.ts`
-- Create: `packages/fingerprint/test/scan.test.ts`
+- Create: `packages/void-fingerprint/src/scan.ts`
+- Create: `packages/void-fingerprint/test/fixtures/demo-app/void.json`
+- Create: `packages/void-fingerprint/test/fixtures/demo-app/package.json`
+- Create: `packages/void-fingerprint/test/fixtures/demo-app/routes/hello.ts`
+- Create: `packages/void-fingerprint/test/fixtures/demo-app/middleware/auth.ts`
+- Create: `packages/void-fingerprint/test/fixtures/demo-app/workflows/extra.ts`
+- Create: `packages/void-fingerprint/test/scan.test.ts`
 
 **Interfaces:**
 - Consumes: `hashFile` from `../src/canonical.ts`.
@@ -321,7 +327,7 @@ describe("inferBindings", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test packages/fingerprint/test/scan.test.ts`
+Run: `node --test packages/void-fingerprint/test/scan.test.ts`
 Expected: FAIL with "Cannot find module '../src/scan.ts'".
 
 - [ ] **Step 3: Write minimal implementation**
@@ -382,7 +388,7 @@ export function inferBindings(appRoot: string, files: FileEntry[]): Bindings {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test packages/fingerprint/test/scan.test.ts`
+Run: `node --test packages/void-fingerprint/test/scan.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Typecheck**
@@ -393,7 +399,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/fingerprint/src/scan.ts packages/fingerprint/test/scan.test.ts packages/fingerprint/test/fixtures/demo-app
+git add packages/void-fingerprint/src/scan.ts packages/void-fingerprint/test/scan.test.ts packages/void-fingerprint/test/fixtures/demo-app
 git commit -m "feat: add app file scanner and binding inference"
 ```
 
@@ -402,10 +408,10 @@ git commit -m "feat: add app file scanner and binding inference"
 ### Task 4: Manifest assembly + emit
 
 **Files:**
-- Create: `packages/fingerprint/src/manifest.ts`
-- Create: `packages/fingerprint/src/emit.ts`
-- Create: `packages/fingerprint/test/manifest.test.ts`
-- Modify: `packages/fingerprint/src/index.ts` (re-export manifest + emit)
+- Create: `packages/void-fingerprint/src/manifest.ts`
+- Create: `packages/void-fingerprint/src/emit.ts`
+- Create: `packages/void-fingerprint/test/manifest.test.ts`
+- Modify: `packages/void-fingerprint/src/index.ts` (re-export manifest + emit)
 
 **Interfaces:**
 - Consumes: `canonical`, `sha256Hex` from `./canonical.js`; `scanAppFiles`, `inferBindings`, `FileEntry`, `Bindings` from `./scan.js`. NOTE: source imports use `.ts` extension for `node --test` type-stripping (`./scan.ts`); the tsc build rewrites nothing, so `dist` output keeps `.ts` specifiers — set `module/moduleResolution` to `NodeNext` (Task 1) and always import with explicit `.ts` extension so both the strip-types runner and compiled `dist` resolve. Same rule applies in every later task.
@@ -458,7 +464,7 @@ describe("emitManifest", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test packages/fingerprint/test/manifest.test.ts`
+Run: `node --test packages/void-fingerprint/test/manifest.test.ts`
 Expected: FAIL with "Cannot find module '../src/manifest.ts'".
 
 - [ ] **Step 3: Write minimal implementation**
@@ -575,7 +581,7 @@ export * from "./emit.ts";
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `node --test packages/fingerprint/test/manifest.test.ts`
+Run: `node --test packages/void-fingerprint/test/manifest.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Typecheck**
@@ -586,7 +592,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add packages/fingerprint/src/manifest.ts packages/fingerprint/src/emit.ts packages/fingerprint/src/index.ts packages/fingerprint/test/manifest.test.ts
+git add packages/void-fingerprint/src/manifest.ts packages/void-fingerprint/src/emit.ts packages/void-fingerprint/src/index.ts packages/void-fingerprint/test/manifest.test.ts
 git commit -m "feat: add manifest assembly and emit"
 ```
 
@@ -595,10 +601,10 @@ git commit -m "feat: add manifest assembly and emit"
 ### Task 5: diff + check
 
 **Files:**
-- Create: `packages/fingerprint/src/diff.ts`
-- Create: `packages/fingerprint/src/check.ts`
-- Create: `packages/fingerprint/test/diff.test.ts`
-- Modify: `packages/fingerprint/src/index.ts` (re-export diff + check)
+- Create: `packages/void-fingerprint/src/diff.ts`
+- Create: `packages/void-fingerprint/src/check.ts`
+- Create: `packages/void-fingerprint/test/diff.test.ts`
+- Modify: `packages/void-fingerprint/src/index.ts` (re-export diff + check)
 
 **Interfaces:**
 - Consumes: `buildManifest`, `EmitOptions`, `Manifest` from `./manifest.ts`.
@@ -693,7 +699,7 @@ function readFile(p: string): string {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test packages/fingerprint/test/diff.test.ts`
+Run: `node --test packages/void-fingerprint/test/diff.test.ts`
 Expected: FAIL with "Cannot find module '../src/diff.ts'".
 
 - [ ] **Step 3: Write minimal implementation**
@@ -759,8 +765,8 @@ export function checkFingerprint(
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `node --test packages/fingerprint/test/diff.test.ts`
-Expected: PASS. Then confirm no stray baseline: `git status --short packages/fingerprint/test/fixtures` shows only intended files.
+Run: `node --test packages/void-fingerprint/test/diff.test.ts`
+Expected: PASS. Then confirm no stray baseline: `git status --short packages/void-fingerprint/test/fixtures` shows only intended files.
 
 - [ ] **Step 6: Typecheck**
 
@@ -770,7 +776,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add packages/fingerprint/src/diff.ts packages/fingerprint/src/check.ts packages/fingerprint/src/index.ts packages/fingerprint/test/diff.test.ts
+git add packages/void-fingerprint/src/diff.ts packages/void-fingerprint/src/check.ts packages/void-fingerprint/src/index.ts packages/void-fingerprint/test/diff.test.ts
 git commit -m "feat: add diff and check against committed baseline"
 ```
 
@@ -779,13 +785,13 @@ git commit -m "feat: add diff and check against committed baseline"
 ### Task 6: Monorepo graph
 
 **Files:**
-- Create: `packages/fingerprint/src/graph.ts`
-- Create: `packages/fingerprint/test/graph.test.ts`
-- Modify: `packages/fingerprint/src/index.ts` (re-export graph)
+- Create: `packages/void-fingerprint/src/graph.ts`
+- Create: `packages/void-fingerprint/test/graph.test.ts`
+- Modify: `packages/void-fingerprint/src/index.ts` (re-export graph)
 
 **Interfaces:**
-- Consumes: `Manifest` type from `./manifest.ts` (read-only; graph never rebuilds manifests — caller passes app roots and graph reads committed files, falling back to `buildManifest` when missing).
-- Produces: `type Graph = { format: 1; apps: Record<string, { fingerprint: string; deps: string[] }>; sharedDeps: Record<string, string[]> }`, `buildGraph(root: string, appDirs: string[], opts?: EmitOptions): Graph`, `writeGraph(root: string, appDirs: string[], opts?: EmitOptions): string` (writes `fingerprint.graph.json` at root, returns path). `sharedDeps` maps a dependency name to the apps using it (this is where the db-touches-all edge surfaces). Task 7 imports `buildGraph`/`writeGraph`.
+- Consumes: `Manifest` type from `./manifest.ts` (read-only; graph never rebuilds manifests — it reads each app's committed `void.fingerprint.json`, and errors per-app when missing instead of scanning).
+- Produces: `type Graph = { format: 1; apps: Record<string, { fingerprint: string; deps: Record<string, string> }>; crossApp: string[] }`, `buildGraph(root: string, appDirs: string[]): Graph`, `writeGraph(root: string, appDirs: string[]): string` (writes `fingerprint.graph.json` at root, returns path). `deps` maps dependency name → range as recorded in the manifest; `crossApp` lists app names whose manifests list another app's package (e.g. `api-client` consumed by web/admin). No `sharedDeps` fold needed — the human table derives shared edges from `apps[].deps` at print time. Task 7 imports `buildGraph`/`writeGraph`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -810,19 +816,35 @@ function makeApp(root: string, name: string, deps: Record<string, string>): stri
 }
 
 describe("graph", () => {
-  it("maps per-app fingerprints and shared-dep edges", () => {
+  it("maps per-app fingerprints, dep ranges, and cross-app edges", () => {
     const root = join(tmpdir(), `fp-graph-${Date.now()}`);
     const a = makeApp(root, "app-a", { "@void-monorepo/db": "workspace:*" });
-    const b = makeApp(root, "app-b", { "@void-monorepo/db": "workspace:*" });
+    const b = makeApp(root, "app-b", { "@void-monorepo/db": "workspace:*", "app-a": "workspace:*" });
     try {
       const g = buildGraph(root, [a, b]);
       assert.equal(g.format, 1);
       assert.deepEqual(Object.keys(g.apps).sort(), ["app-a", "app-b"]);
-      assert.deepEqual(g.sharedDeps["@void-monorepo/db"], ["app-a", "app-b"]);
+      assert.deepEqual(g.apps["app-a"].deps, { "@void-monorepo/db": "workspace:*" });
+      assert.deepEqual(g.apps["app-b"].deps, { "@void-monorepo/db": "workspace:*", "app-a": "workspace:*" });
+      assert.deepEqual(g.crossApp, ["app-b"]);
       const path = writeGraph(root, [a, b]);
       assert.equal(path, join(root, "fingerprint.graph.json"));
       assert.ok(existsSync(path));
       assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), g);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("errors per-app on missing committed manifest instead of scanning", () => {
+    const root = join(tmpdir(), `fp-graph-missing-${Date.now()}`);
+    const dir = join(root, "app-x");
+    mkdirSync(join(dir, "routes"), { recursive: true });
+    writeFileSync(join(dir, "void.json"), JSON.stringify({ target: "cloudflare" }));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "app-x" }));
+    writeFileSync(join(dir, "routes/a.ts"), "// x\n");
+    try {
+      assert.throws(() => buildGraph(root, [dir]), /app-x/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -832,7 +854,7 @@ describe("graph", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test packages/fingerprint/test/graph.test.ts`
+Run: `node --test packages/void-fingerprint/test/graph.test.ts`
 Expected: FAIL with "Cannot find module '../src/graph.ts'".
 
 - [ ] **Step 3: Write minimal implementation**
@@ -841,42 +863,44 @@ Expected: FAIL with "Cannot find module '../src/graph.ts'".
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { canonical } from "./canonical.ts";
-import { buildManifest, type EmitOptions, type Manifest } from "./manifest.ts";
+import type { Manifest } from "./manifest.ts";
 
 export type Graph = {
   format: 1;
-  apps: Record<string, { fingerprint: string; deps: string[] }>;
-  sharedDeps: Record<string, string[]>;
+  apps: Record<string, { fingerprint: string; deps: Record<string, string> }>;
+  crossApp: string[];
 };
 
-function readCommitted(appRoot: string, opts: EmitOptions): Manifest {
+function readCommitted(appRoot: string): Manifest {
+  let raw: string;
   try {
-    return JSON.parse(readFileSync(join(appRoot, "void.fingerprint.json"), "utf8"));
+    raw = readFileSync(join(appRoot, "void.fingerprint.json"), "utf8");
   } catch {
-    return buildManifest(appRoot, opts);
+    throw new Error(`missing committed fingerprint for ${appRoot} — run fp:emit first`);
   }
+  return JSON.parse(raw) as Manifest;
 }
 
-export function buildGraph(root: string, appDirs: string[], opts: EmitOptions = {}): Graph {
+export function buildGraph(root: string, appDirs: string[]): Graph {
   const apps: Graph["apps"] = {};
-  const users: Record<string, string[]> = {};
+  const manifests: Array<{ name: string; m: Manifest }> = [];
   for (const dir of appDirs) {
-    const m = readCommitted(dir, opts);
+    const m = readCommitted(dir);
     const name = (m.app as string) || relative(root, dir);
-    const deps = Object.keys(m.workspaceDeps ?? {}).sort();
-    apps[name] = { fingerprint: m.fingerprint, deps };
-    for (const d of deps) users[d] = [...(users[d] ?? []), name];
+    apps[name] = { fingerprint: m.fingerprint, deps: m.workspaceDeps ?? {} };
+    manifests.push({ name, m });
   }
-  const sharedDeps: Graph["sharedDeps"] = {};
-  for (const [dep, names] of Object.entries(users).sort(([a], [b]) => (a < b ? -1 : 1))) {
-    if (names.length > 1) sharedDeps[dep] = names.sort();
-  }
-  return { format: 1, apps, sharedDeps };
+  const appNames = new Set(Object.keys(apps));
+  const crossApp = manifests
+    .filter(({ m }) => Object.keys(m.workspaceDeps ?? {}).some((d) => appNames.has(d)))
+    .map(({ name }) => name)
+    .sort();
+  return { format: 1, apps, crossApp };
 }
 
-export function writeGraph(root: string, appDirs: string[], opts: EmitOptions = {}): string {
+export function writeGraph(root: string, appDirs: string[]): string {
   const path = join(root, "fingerprint.graph.json");
-  writeFileSync(path, canonical(buildGraph(root, appDirs, opts)));
+  writeFileSync(path, canonical(buildGraph(root, appDirs)));
   return path;
 }
 ```
@@ -885,7 +909,7 @@ export function writeGraph(root: string, appDirs: string[], opts: EmitOptions = 
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `node --test packages/fingerprint/test/graph.test.ts`
+Run: `node --test packages/void-fingerprint/test/graph.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Typecheck**
@@ -896,7 +920,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add packages/fingerprint/src/graph.ts packages/fingerprint/src/index.ts packages/fingerprint/test/graph.test.ts
+git add packages/void-fingerprint/src/graph.ts packages/void-fingerprint/src/index.ts packages/void-fingerprint/test/graph.test.ts
 git commit -m "feat: add monorepo graph with shared-dep edges"
 ```
 
@@ -905,16 +929,16 @@ git commit -m "feat: add monorepo graph with shared-dep edges"
 ### Task 7: Standalone CLI binary
 
 **Files:**
-- Create: `packages/fingerprint/src/cli.ts`
-- Create: `packages/fingerprint/bin/void-fingerprint.mjs`
-- Create: `packages/fingerprint/test/cli.test.ts`
-- Modify: `packages/fingerprint/package.json` (add `fingerprint:check` script: `node ./bin/void-fingerprint.mjs check --ci`)
+- Create: `packages/void-fingerprint/src/cli.ts`
+- Create: `packages/void-fingerprint/bin/void-fingerprint.mjs`
+- Create: `packages/void-fingerprint/test/cli.test.ts`
+- Modify: `packages/void-fingerprint/package.json` (add `fp:check` script: `node ./bin/void-fingerprint.mjs check --ci`)
 
 **Interfaces:**
 - Consumes: `emitManifest`, `diffManifest`, `checkFingerprint`, `buildGraph`/`writeGraph` (exact names from Tasks 4–6).
-- Produces: `run(argv: string[], cwd: string): Promise<number>` returning process exit code (0 clean / 1 drift or usage error / 2 unknown command). Bin maps per-app `cwd` (run via `pnpm --filter`) and `--all` (repo root: child dirs of `apps/`). Consumers outside the package only touch the bin, never `run`.
+- Produces: `run(argv: string[], cwd: string): Promise<number>` returning process exit code (0 clean / 1 drift / 2 tool or usage error). Bin maps per-app `cwd` (default: run the bin from the app dir, optional app path argument) and `--all` (repo root: child dirs of `apps/`). Consumers outside the package only touch the bin, never `run`.
 
-Commands: `emit [--all]`, `diff [--json] [--all]`, `check --ci [--all]`, `graph [--all]`. `--all` resolves app dirs as `<root>/apps/*` containing `void.json`. Without `--all`, `cwd` itself is the app root. `graph` without `--all` prints that app's node; with `--all` writes root `fingerprint.graph.json`.
+Commands: `emit [--all]`, `diff [--json] [--all] [--base <ref>]`, `check [--ci] [--all] [--base <ref>]`, `graph [--all] [--format mermaid]`. `--all` resolves app dirs as `<root>/apps/*` containing `void.json`. Without `--all`, the app path argument (or `cwd`) is the app root. `graph` without `--all` prints that app's node; with `--all` writes root `fingerprint.graph.json`. `--base <git-ref>` reads the committed manifest at that git ref via `git show <ref>:<path>` instead of the working-tree copy; if git fails, exit 2. `--ci` forces non-TTY output (no color, no suggestion footer, stable line ordering) and promotes warnings to errors — a missing committed manifest is exit 2 under `--ci`, a warning otherwise. `--json` emits `{app, ok, changed:[{path, from, to, evidence?}], hash:{committed, computed}}` and stays orthogonal to `--ci`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -950,9 +974,11 @@ describe("run", () => {
       assert.equal(await run(["check", "--ci"], app), 0);
       writeFileSync(join(app, "routes/a.ts"), "// a\n// drift\n");
       assert.equal(await run(["check", "--ci"], app), 1);
-      assert.equal(await run(["diff", "--json"], app), 0);
-      assert.ok(logs.some((l) => l.includes("routes/a.ts")));
+      assert.equal(await run(["diff", "--json"], app), 1);
+      assert.ok(logs.some((l) => l.includes("\"path\": \"routes/a.ts\"")));
       assert.equal(await run(["bogus"], app), 2);
+      rmSync(join(app, "void.fingerprint.json"));
+      assert.equal(await run(["check", "--ci"], app), 2);
     } finally {
       console.log = orig;
       rmSync(root, { recursive: true, force: true });
@@ -963,7 +989,7 @@ describe("run", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test packages/fingerprint/test/cli.test.ts`
+Run: `node --test packages/void-fingerprint/test/cli.test.ts`
 Expected: FAIL with "Cannot find module '../src/cli.ts'".
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1057,13 +1083,13 @@ export async function run(argv: string[], cwd: string): Promise<number> {
           continue;
         }
         dirty = true;
-        if (json) console.log(JSON.stringify({ app: a, ...d }));
+        if (json) console.log(JSON.stringify({ app: a, ok: false, changed: d.changed, hash: d.hash }));
         else {
           console.log(`${a}: drift`);
-          for (const f of d.changedFiles) console.log(`  ${f}`);
+          for (const f of d.changed) console.log(`  ${f.path}: ${JSON.stringify(f.from)} -> ${JSON.stringify(f.to)}${f.evidence ? ` (${f.evidence})` : ""}`);
         }
       }
-      return 0 && dirty ? 0 : 0;
+      return dirty ? 1 : 0;
     }
     case "check": {
       let clean = true;
@@ -1087,14 +1113,14 @@ export async function run(argv: string[], cwd: string): Promise<number> {
       return 0;
     }
     default: {
-      console.log("usage: void-fingerprint <emit|diff|check|graph> [--all] [--json] [--ci]");
+      console.log("usage: void-fingerprint <emit|diff|check|graph> [--all] [--json] [--ci] [--base <ref>] [--format mermaid]");
       return 2;
     }
   }
 }
 ```
 
-NOTE to implementer: the `diff` case above contains a nonsense expression (`0 && dirty ? 0 : 0`) left deliberately visible — replace it with `return 0;` (`diff` never fails; `check` owns exit codes). Everything else is final.
+NOTE to implementer: `diffManifest` (Task 5) must return `{clean, changed: [{path, from, to, evidence?}], hash: {committed, computed}}` — rename `changedFiles` accordingly. `diff` exits 0 clean / 1 drift / 2 tool error: same code ladder as `check`, because CI may use either. Everything else is final, with three additions required by the settled grilling decisions: (1) `--base <git-ref>` reads the committed manifest at that ref via `git show <ref>:<app>/void.fingerprint.json` (spawn `git`, exit 2 on failure) and replaces the working-tree baseline; (2) `--ci` forces non-TTY output (no color, no suggestion footer, stable line ordering) and promotes a missing committed manifest from warning to exit 2; (3) the human drift report ends with the footer `run pnpm fp:emit to regenerate` unless `--ci`.
 
 `bin/void-fingerprint.mjs`:
 
@@ -1106,24 +1132,24 @@ const code = await run(process.argv.slice(2), process.cwd());
 process.exitCode = code;
 ```
 
-- [ ] **Step 4: Fix the `diff` return** to `return 0;` with comment `// diff reports; check enforces`.
+- [ ] **Step 4: Pin exit codes in the test** — extend the CLI test: `run(["diff"], app)` after drift exits 1, `run(["bogus"], app)` exits 2, and `run(["check", "--ci"], app)` on an app with no committed manifest exits 2 (warning path without `--ci` still exits 0).
 
-- [ ] **Step 5: Add `fingerprint:check` script** to `packages/fingerprint/package.json` scripts: `"fingerprint:check": "node ./bin/void-fingerprint.mjs check --ci"`. NOTE: bin runs from `dist/` — package `build` must run before the bin works; `turbo.json` ordering (Task 8) guarantees it in CI.
+- [ ] **Step 5: Add `fp:check` script** to `packages/void-fingerprint/package.json` scripts: `"fp:check": "node ./bin/void-fingerprint.mjs check --ci"`. NOTE: bin runs from `dist/` — package `build` must run before the bin works; `turbo.json` ordering (Task 8) guarantees it in CI.
 
 - [ ] **Step 6: Run test to verify it passes**
 
-Run: `node --test packages/fingerprint/test/cli.test.ts`
+Run: `node --test packages/void-fingerprint/test/cli.test.ts`
 Expected: PASS.
 
 - [ ] **Step 7: Typecheck + build**
 
-Run: `pnpm --filter void-fingerprint typecheck && pnpm --filter void-fingerprint build && node packages/fingerprint/bin/void-fingerprint.mjs --help; echo "exit=$?"`
+Run: `pnpm --filter void-fingerprint typecheck && pnpm --filter void-fingerprint build && node packages/void-fingerprint/bin/void-fingerprint.mjs --help; echo "exit=$?"`
 Expected: typecheck PASS, build emits `dist/` (incl. `dist/cli.js`), bin prints usage, `exit=2`.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add packages/fingerprint/src/cli.ts packages/fingerprint/bin/void-fingerprint.mjs packages/fingerprint/test/cli.test.ts packages/fingerprint/package.json
+git add packages/void-fingerprint/src/cli.ts packages/void-fingerprint/bin/void-fingerprint.mjs packages/void-fingerprint/test/cli.test.ts packages/void-fingerprint/package.json
 git commit -m "feat: add standalone fingerprint CLI binary"
 ```
 
@@ -1132,12 +1158,12 @@ git commit -m "feat: add standalone fingerprint CLI binary"
 ### Task 8: Plugin + Turbo/CI wiring + dogfood
 
 **Files:**
-- Create: `packages/fingerprint/src/plugin.ts`
-- Create: `packages/fingerprint/test/plugin.test.ts`
-- Modify: `packages/fingerprint/src/index.ts` (re-export plugin)
-- Modify: `packages/fingerprint/package.json` (add `void` + `vite`? NO — plugin uses `import type` only; no new deps. Document this in the step.)
-- Modify: `turbo.json` (add `test`, `fingerprint:check` tasks)
-- Modify: `apps/web/package.json`, `apps/api/package.json`, `apps/admin/package.json` (add `void-fingerprint` devDep + `fingerprint:check` script)
+- Create: `packages/void-fingerprint/src/plugin.ts`
+- Create: `packages/void-fingerprint/test/plugin.test.ts`
+- Modify: `packages/void-fingerprint/src/index.ts` (re-export plugin)
+- Modify: `packages/void-fingerprint/package.json` (add `void` + `vite`? NO — plugin uses `import type` only; no new deps. Document this in the step.)
+- Modify: `turbo.json` (add `test`, `fp:check` tasks)
+- Modify: `apps/web/package.json`, `apps/api/package.json`, `apps/admin/package.json` (add `void-fingerprint` devDep + `fp:check` script)
 - Modify: `.github/workflows/deploy.yml` (validate job: fingerprint check step)
 - Modify: root `package.json` (add root `test` script)
 - Create (by running bin): `apps/web/void.fingerprint.json`, `apps/api/void.fingerprint.json`, `apps/admin/void.fingerprint.json`, `fingerprint.graph.json`
@@ -1221,7 +1247,7 @@ describe("fingerprintPlugin", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test packages/fingerprint/test/plugin.test.ts`
+Run: `node --test packages/void-fingerprint/test/plugin.test.ts`
 Expected: FAIL with "Cannot find module '../src/plugin.ts'".
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1261,7 +1287,7 @@ export function fingerprintPlugin(opts: EmitOptions = {}): Plugin & {
 
 - [ ] **Step 5: Run test + typecheck**
 
-Run: `node --test packages/fingerprint/test/plugin.test.ts && pnpm --filter void-fingerprint typecheck`
+Run: `node --test packages/void-fingerprint/test/plugin.test.ts && pnpm --filter void-fingerprint typecheck`
 Expected: PASS + PASS.
 
 - [ ] **Step 6: Wire Turbo**
@@ -1270,38 +1296,42 @@ In `turbo.json` tasks add:
 
 ```json
 "test": { "dependsOn": ["^build"] },
-"fingerprint:check": { "inputs": ["routes/**", "pages/**", "middleware/**", "crons/**", "queues/**", "workflows/**", "void.json", "package.json", "vite.config.ts", "void.fingerprint.json"] }
+"fp:emit":  { "cache": false },
+"fp:check": { "cache": false, "inputs": ["$TURBO_DEFAULT$", ".env*", "void.json", "void.fingerprint.json"] },
+"fp:graph": { "cache": false, "dependsOn": ["fp:check"] }
 ```
 
-No `dependsOn`, no `outputs` — pure source scan. Root `package.json` scripts add `"test": "turbo run test"`.
+`fp:emit` is uncached because it mutates a committed file; `fp:check` is a pure source scan with no build `dependsOn`; `fp:graph` depends on `fp:check` so the root graph never builds on stale app manifests. Root `package.json` scripts add `"test": "turbo run test"` and `"fp:check:all": "node packages/void-fingerprint/bin/void-fingerprint.mjs check --ci --all"`.
 
 - [ ] **Step 7: Wire apps**
 
-Each of `apps/{web,api,admin}/package.json`: devDependencies += `"void-fingerprint": "workspace:*"`, scripts += `"fingerprint:check": "void-fingerprint check --ci"`. Run `pnpm install`.
+Each of `apps/{web,api,admin}/package.json`: devDependencies += `"void-fingerprint": "workspace:*"`, scripts += `"fp:emit": "void-fingerprint emit"`, `"fp:check": "void-fingerprint check --ci"`, `"fp:graph": "void-fingerprint graph"`. Every script shells out to the binary — never inlines logic, so a later vite-plus mapping renames nothing. Run `pnpm install`.
 
 - [ ] **Step 8: Wire CI**
 
-In `.github/workflows/deploy.yml`, `validate` job, after `Typecheck Workspace`, insert:
+In `.github/workflows/deploy.yml`, `validate` job: add `fetch-depth: 0` to the `actions/checkout` step (full history), then after the build step insert:
 
 ```yaml
       - name: Fingerprint Drift Check
-        run: pnpm exec turbo run fingerprint:check
+        run: pnpm run fp:check:all
 ```
+
+Drift fails `validate`, so `deploy` (which `needs: validate`) never runs. Do NOT wire `--base origin/main` into CI — the committed-file default already blocks the merge; `--base` stays a local/PR-review convenience. No PR-comment bot.
 
 - [ ] **Step 9: Dogfood emit**
 
-Run: `pnpm --filter void-fingerprint build && pnpm exec turbo run build --filter=void-fingerprint 2>/dev/null; pnpm --filter @void-monorepo/api exec void-fingerprint emit && pnpm --filter @void-monorepo/web exec void-fingerprint emit && pnpm --filter @void-monorepo/admin exec void-fingerprint emit && node packages/fingerprint/bin/void-fingerprint.mjs graph --all`
-Expected: three `apps/*/void.fingerprint.json` created, root `fingerprint.graph.json` created with `@void-monorepo/db` in `sharedDeps` covering all three apps. Verify: `node -e "const g=require('./fingerprint.graph.json');console.log(g.sharedDeps)"` shows the db edge.
+Run: `pnpm --filter void-fingerprint build && pnpm exec turbo run build --filter=void-fingerprint 2>/dev/null; pnpm --filter @void-monorepo/api exec void-fingerprint emit && pnpm --filter @void-monorepo/web exec void-fingerprint emit && pnpm --filter @void-monorepo/admin exec void-fingerprint emit && node packages/void-fingerprint/bin/void-fingerprint.mjs graph --all`
+Expected: three `apps/*/void.fingerprint.json` created, root `fingerprint.graph.json` created. Verify: `node -e "const g=require('./fingerprint.graph.json');console.log(g.apps['@void-monorepo/web'].deps['@void-monorepo/db'])"` shows the db range, and `g.crossApp` lists apps consuming another app's package.
 
 - [ ] **Step 10: Full verification**
 
-Run: `pnpm run typecheck && node --test packages/fingerprint/test/*.test.ts && pnpm exec turbo run fingerprint:check`
+Run: `pnpm run typecheck && node --test packages/void-fingerprint/test/*.test.ts && pnpm run fp:check:all`
 Expected: all PASS; check exits 0 on the just-emitted tree.
 
 - [ ] **Step 11: Commit in two parts**
 
 ```bash
-git add packages/fingerprint turbo.json apps/web/package.json apps/api/package.json apps/admin/package.json .github/workflows/deploy.yml package.json pnpm-lock.yaml
+git add packages/void-fingerprint turbo.json apps/web/package.json apps/api/package.json apps/admin/package.json .github/workflows/deploy.yml package.json pnpm-lock.yaml
 git commit -m "ci: wire fingerprint check into turbo and validate job"
 git add apps/web/void.fingerprint.json apps/api/void.fingerprint.json apps/admin/void.fingerprint.json fingerprint.graph.json
 git commit -m "feat: add committed fingerprints for web, api, admin + root graph"
@@ -1313,7 +1343,7 @@ git commit -m "feat: add committed fingerprints for web, api, admin + root graph
 
 (Executor or reviewer runs this after writing the plan; included so the checklist travels with the doc.)
 
-1. **Spec coverage:** every acceptance criterion maps — #1 emit (Tasks 4+7+8/Step 9), #2/#3 diff+check exits (Tasks 5+7), #4 graph db edge (Tasks 6+8/Step 9), #5 turbo+CI (Task 8), #6 publish shape (Task 1 `files`/`prepublishOnly`; add a `pnpm pack --dry-run` verification inside Task 8 Step 10 if pack is available offline).
+1. **Spec coverage:** every acceptance criterion maps — #1 emit (Tasks 4+7+8/Step 9), #2/#3 diff+check exits (Tasks 5+7), #4 graph edges incl. crossApp (Tasks 6+8/Step 9), #5 turbo+CI (Task 8), #6 publish shape (Task 1 `files`/`prepublishOnly`; add a `pnpm pack --dry-run` verification inside Task 8 Step 10 if pack is available offline).
 2. **Placeholder scan:** search for `TBD|TODO|appropriate|similar to Task` — the only allowed occurrence is the deliberately-flagged `diff` return in Task 7 Step 3, which Step 4 fixes.
 3. **Type consistency:** `EmitOptions`, `Manifest`, `FileEntry`, `Bindings`, `DiffResult`, `Graph`, `run(argv, cwd)` — identical names/signatures in every task; `.ts`-extension imports throughout.
 4. **Review Focus:** all five lines have owning tests (CRLF → Task 2; `env["X"]` → Task 3; workflows default-off → Task 3; missing baseline → Task 5; exit codes → Task 7).

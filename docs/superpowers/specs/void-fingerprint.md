@@ -11,7 +11,7 @@ Non-goals (map Out of scope): runtime app-to-app signing, deploy provenance audi
 ## Package
 
 - Name `void-fingerprint`, MIT, public. Version `0.1.0`. Workspace-linked internally (`workspace:*` consumers).
-- `packages/fingerprint/`: pure lib (`emitManifest`, `diff`, `check`, `graph`) + thin Vite plugin + standalone `bin/void-fingerprint.mjs` (node shebang, zero Vite import, zero runtime deps).
+- `packages/void-fingerprint/`: pure lib (`emitManifest`, `diff`, `check`, `graph`) + thin Vite plugin + standalone `bin/void-fingerprint.mjs` (node shebang, zero Vite import, zero runtime deps). Sibling package — not inside `flow` (runtime workflow engine, different domain).
 - Engines: `node >= 22` (type-stripping runs TS bin/lib without a loader).
 - Build: `tsc` to `dist/` (types included); `exports` point at `dist`; `files: [dist, bin]`; `prepublishOnly` builds. Internal use resolves `dist` via Turbo `^build` ordering.
 - Erasable TS only (no enums/namespaces) so `node --test` runs sources directly.
@@ -59,12 +59,17 @@ Local ground truth (inventory ticket): standard native-Void mode, bare `voidPlug
 
 ## CLI
 
-`void-fingerprint <emit|diff|check|graph> [--all] [--json]`, run per app via `pnpm --filter` or `--all` from root. Baseline = committed files.
+Bare `void-fingerprint` = `check`. Primary invocation is per-app from cwd (optional app path argument, defaults to cwd); `--all` from the repo root is sugar that loops `apps/*` via a thin root script. Apps carry scripts `fp:emit` / `fp:check` / `fp:graph`, root mirrors `fp:check:all` — every script shells out to the binary, never inlines logic (a later vite-plus mapping renames nothing).
 
-- `emit`: (re)write manifests; per app or `--all`.
-- `diff`: working tree vs committed; human default, `--json` for machines; exit 0 (prints "clean" when no drift).
-- `check --ci`: exit 1 on drift (silent-ish on clean, single line), for CI.
-- `graph`: write root graph + print per-app edges.
+Baseline = committed `void.fingerprint.json`. Optional `--base <git-ref>` compares the working tree against the fingerprint committed at that ref (PR drift vs main) — opt-in, local/PR-review only, never in CI.
+
+- `emit`: rewrites committed manifests; per app or `--all`.
+- `diff`: working tree vs committed (or `--base` ref); human default, `--json` for machines; exit 0 when clean.
+- `check` / `check --ci`: exit `0` clean, `1` drift, `2` tool/usage error (CI needs drift ≠ crash). `--all` exits 1 if any app drifts and prints per-app sections. `--ci` is presentation + strictness only: non-TTY output (no color, no footer, stable line ordering), warnings promoted to errors (missing committed manifest = exit 2). Drift logic is identical local vs CI.
+
+Human drift report: compact table, one line per drifted field with evidence — `bindings: +KV (apps/api/routes/x.ts:12)` — plus footer `run pnpm fp:emit to regenerate`. `--json` emits `{app, ok, changed:[{path, from, to, evidence?}], hash:{committed, computed}}`; the full manifest is never dumped into the report.
+
+`graph` (root-only): reads committed manifests only, never re-scans (deterministic, offline-cheap). Edges: app → consumed workspace package (name + range), plus `crossApp` marker when one app's manifest lists another app's package (`api-client` consumed by web/admin). Outputs human table to stdout + root `fingerprint.graph.json`; `--format mermaid` escape hatch for README embedding.
 
 ## Plugin (thin wrapper)
 
@@ -72,15 +77,25 @@ Local ground truth (inventory ticket): standard native-Void mode, bare `voidPlug
 
 ## CI wiring
 
-- New `fingerprint:check` Turbo task: pure source scan, zero build deps (no `dependsOn`), inputs = scanned dirs + `void.json` + `package.json` + committed manifest.
-- `validate` job: `turbo run fingerprint:check` after typecheck, before build; fails PRs on drift.
+Turbo tasks (all `cache: false` — emit mutates a committed file, check/graph are cheap to rerun):
+
+```json
+"fp:emit":  { "cache": false },
+"fp:check": { "cache": false, "inputs": ["$TURBO_DEFAULT$", ".env*", "void.json", "void.fingerprint.json"] },
+"fp:graph": { "cache": false, "dependsOn": ["fp:check"] }
+```
+
+`fp:check` has no build `dependsOn` — the emitter is a pure lib scanning source. `fp:graph` depends on `fp:check` so the root graph never builds on stale app manifests.
+
+- `validate` job: checkout with `fetch-depth: 0` (full history), then `pnpm run fp:check:all` after build; fails PRs on drift.
 - `deploy` job unchanged except `.void/` copies ride existing build outputs.
+- `--base origin/main` is never wired into CI — the committed-file default already blocks the merge. No PR-comment bot (scope creep).
 
 ## Acceptance
 
-1. `pnpm --filter @void-monorepo/api void-fingerprint emit` writes `apps/api/void.fingerprint.json` with `format: 1` + 64-char `fingerprint`.
-2. Editing a route then `check --ci` exits 1; `diff` names the file.
-3. Clean tree: `check --ci` exits 0.
-4. `graph --all` writes root `fingerprint.graph.json` showing db edge to all three apps.
-5. `turbo run fingerprint:check` passes; PR with drift fails `validate`.
-6. `pnpm publish` dry-run of `packages/fingerprint` contains only `dist/` + `bin/`.
+1. `pnpm --filter @void-monorepo/api fp:emit` writes `apps/api/void.fingerprint.json` with `format: 1` + 64-char `fingerprint`.
+2. Editing a route then `check --ci` exits 1; `diff` names the file with `file:line` evidence.
+3. Clean tree: `check --ci` exits 0; malformed config exits 2.
+4. Root `fp:graph` writes `fingerprint.graph.json` showing db edge to all three apps.
+5. `turbo run fp:check` passes; PR with drift fails `validate`.
+6. `pnpm publish` dry-run of `packages/void-fingerprint` contains only `dist/` + `bin/`.
