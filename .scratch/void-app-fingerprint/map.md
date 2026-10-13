@@ -12,7 +12,7 @@ Spec for new OSS DX package delivering stable app Fingerprint for Void apps — 
 
 ## Decisions so far
 
-<!-- one line per closed ticket: gist + link. Empty: no tickets closed yet. -->
+- [Void inference scanner internals](https://github.com/titan-65/Void_Apps/issues/2): reuse Void resolution order + specifier/env table; repo standard-mode, legacy void.json, zero live void imports; grammar + migration caveats into #5/#7.
 
 ## Not yet specified
 

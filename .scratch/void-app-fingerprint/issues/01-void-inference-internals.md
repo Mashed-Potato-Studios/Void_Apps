@@ -1,7 +1,7 @@
 # Void inference scanner internals
 
 Type: research
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -11,3 +11,7 @@ What exactly does Void's resource inference scan, and how can a fingerprint tool
 ## Comments
 
 - Research probe returned (chart session, ticket still open): full scan-dir/binding/override findings with doc + local citations; raw notes at /tmp/void-inference/notes.md (git unavailable, no branch). Key deltas for schema work: repo uses legacy void.json (canonical is now void.config.ts + void.lock.json); zero live void/* imports; standard mode; open unknowns = scanner grammar (regex vs AST, re-export tracing, env["DB"] forms), SSR-entry patterns, per-framework scanDir variance. See subagent result in chart session before claiming.
+
+## Answer
+
+Resolved 2026-10-13 (GitHub #2, closed). Verified against docs + repo: standard/framework scan dirs, always-scanned trio, file types, Vue/Svelte exclusion, import-specifier + env table, binding table, scanDirs-replaces / bindings-named-only / sourceDir semantics, dep-based detection — all confirmed. Local: standard native-Void mode, bare voidPlugin(), target cloudflare, legacy void.json sans inference keys; no src/, durable-objects/, void.config.ts, .void/, node_modules/void; zero live void/* imports. Reuse rule: mirror Void resolution order, same extensions + .server.ts rule, same specifier/env patterns, then inference.bindings; verify vs void prepare at build. Caveats into #5/#7: scanner grammar, SSR-entry patterns, per-framework variance, void.json migration.
