@@ -53,7 +53,7 @@ jobs:
         # permission). After configuring a trusted publisher on npmjs.com,
         # OIDC takes over via id-token:write + --provenance — delete the
         # secret and drop the NODE_AUTH_TOKEN block below.
-        run: pnpm --filter void-fingerprint publish --access public --provenance
+        run: pnpm --filter void-fingerprint publish --access public --provenance --no-git-checks
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
