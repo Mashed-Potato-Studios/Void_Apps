@@ -17,6 +17,7 @@ Spec for new OSS DX package delivering stable app Fingerprint for Void apps — 
 - [Monorepo app and resource inventory](https://github.com/titan-65/Void_Apps/issues/4): web/api/admin shapes recorded, db touches all apps, no lockfile/migrations/node_modules; workflows/ dir + lockfile policy open into #5.
 - [Manifest schema and hash rules](https://github.com/titan-65/Void_Apps/issues/5): full manifest + extra-paths; SHA-256 canonical JSON format v1; committed manifest + generated copy + root graph; void-fingerprint MIT.
 - [CLI, CI check, and monorepo graph UX](https://github.com/titan-65/Void_Apps/issues/6): emit/diff/check --ci/graph; source-only check pre-build; standalone binary via pnpm filter + Turbo; vp run deferred.
+- [Fingerprint emitter prototype spike](https://github.com/titan-65/Void_Apps/issues/7): probe validated schema/hash on apps/api (8 files, empty bindings); keep shape, kill probe after map closes.
 
 ## Not yet specified
 
