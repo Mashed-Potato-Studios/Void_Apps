@@ -12,10 +12,11 @@
     "./ui": "./src/ui/WorkflowGraph.tsx"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "test": "node --test --import ./test/hooks/register.mjs \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@void-monorepo/types": "workspace:*",
     "drizzle-orm": "^0.39.1"
   },
   "peerDependencies": {
@@ -23,8 +24,12 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true },
-    "react-dom": { "optional": true }
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/react": "^18.3.18",
@@ -33,5 +38,6 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "typescript": "^5.7.3"
-  }
+  },
+  "type": "module"
 }

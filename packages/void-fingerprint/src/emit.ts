@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { canonical } from "./canonical.ts";
-import { buildManifest, type EmitOptions, type Manifest } from "./manifest.ts";
+import { canonical } from "./canonical.js";
+import { buildManifest, type EmitOptions, type Manifest } from "./manifest.js";
 
 export function emitManifest(
   appRoot: string,

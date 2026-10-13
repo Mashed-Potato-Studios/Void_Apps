@@ -6,7 +6,7 @@ This is a **DX drift-detection** tool, not a secret and not an attestation. It a
 
 - **Manifest** (`void.fingerprint.json`, committed per app): the full identity record.
 - **Hash**: SHA-256 over canonical JSON, stable across machines.
-- **CLI**: `emit`, `diff`, `check`, `graph` — zero runtime dependencies, Node 22+.
+- **CLI**: `emit`, `diff`, `check`, `graph` — zero runtime dependencies, Node 22.6+.
 - **CI**: one Turbo task + one workflow step fails PRs on drift.
 - **Plugin**: thin Vite wrapper that snapshots the manifest at build time.
 
@@ -16,7 +16,8 @@ This is a **DX drift-detection** tool, not a secret and not an attestation. It a
 pnpm add -D void-fingerprint
 ```
 
-Requires `node >= 22`. No runtime dependencies.
+Requires `node >= 22.6`. No runtime dependencies (`vite` is an optional
+peer, only needed for the build-time plugin).
 
 ## Quick start
 
@@ -90,7 +91,7 @@ Committed at each app root as `void.fingerprint.json`:
 | `extraPaths` | Opt-in extra directories |
 | `files` | `[{ path, sha256 }]`, sorted by path |
 | `bindings` | `{ specifiers, envAccess }` |
-| `voidJson` | Full `void.json` snapshot |
+| `voidJson` | Full `void.json` snapshot — never put secrets here; it is committed verbatim |
 | `plugins` | Vite plugin names in order (calls with arguments included) |
 | `drizzle` | `{ schemaHash, migrationHashes }`, or `null` |
 | `workspaceDeps` | `dependencies` map, ranges as-is (lockfile-tolerant) |
@@ -230,6 +231,9 @@ export default defineConfig({
   (the generated copy — it rides the existing build outputs into deploy).
 - `apply: "build"` + `enforce: "post"`: it never runs in dev and never
   fights the toolchain. Dev emits nothing by default.
+- The plugin reads the Vite `root` via `configResolved` (override with
+  `fingerprintPlugin({ root })`) and shares the CLI's per-app `extraPaths`
+  mapping, so CLI and plugin snapshots agree.
 - The plugin is pure library calls; all logic lives in the package, so the
   CLI and the plugin can never disagree.
 
@@ -252,6 +256,49 @@ This package is developed inside a monorepo that uses it on itself:
 sits at the root, and CI checks them. The `api` app exercises the
 `extraPaths` path (`workflows/`), and the graph surfaces the shared-database
 edge (`@void-monorepo/db` touches all three apps).
+
+## Releasing
+
+This is the only publishable package in the monorepo; everything else
+stays `private`. Changes are tracked in `CHANGELOG.md` (Keep a Changelog,
+SemVer).
+
+```bash
+cd packages/void-fingerprint
+
+# 1. Move Unreleased entries under a new version heading in CHANGELOG.md
+# 2. Bump (runs build + tests via preversion):
+npm version patch  # or minor / major
+git push --follow-tags
+
+# 3. Publish (tag void-fingerprint-v* triggers CI publish with provenance):
+git tag void-fingerprint-v$(node -p "require('./package.json').version")
+git push origin void-fingerprint-v$(node -p "require('./package.json').version")
+
+# Dry-run anytime:
+pnpm run release:dry
+```
+
+CI verifies the tag matches `package.json`, runs build/typecheck/tests,
+publishes with `--provenance`, and opens a GitHub release.
+
+### npm auth: tokens vs trusted publishing
+
+npm retired classic tokens — use one of these:
+
+- **First publish:** create a **granular access token** at
+  `npmjs.com → Access Tokens` scoped to this package (or short-lived
+  just for the first release), with **publish** permission. Save it as
+  the `NPM_TOKEN` repo secret. This claims the (currently free) name.
+- **After that (recommended):** switch to **trusted publishing** and
+  delete the secret. In the package's `npmjs.com → Settings → Trusted
+  Publisher`, add this repo + the `release.yml` workflow. The workflow
+  already requests `id-token: write` and publishes with `--provenance`,
+  so no token is needed once the trusted publisher is configured.
+  Remove `NODE_AUTH_TOKEN` from the workflow at that point.
+
+Requires 2FA on the npm account regardless; automation/granular tokens
+and OIDC both satisfy CI publishing without interactive 2FA.
 
 ## Known limits
 

@@ -1,5 +1,5 @@
 import { defineHandler } from 'void';
-import { initialPosts } from '@void-monorepo/db';
+import { initialPosts } from '@void-monorepo/db/seed';
 
 export const GET = defineHandler(async ({ request }: { request: Request }) => {
   const url = new URL(request.url);

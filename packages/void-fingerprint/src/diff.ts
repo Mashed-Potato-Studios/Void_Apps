@@ -1,10 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { join, relative } from "node:path";
-import { canonical } from "./canonical.ts";
-import { buildManifest, type EmitOptions } from "./manifest.ts";
-import type { Bindings } from "./scan.ts";
-import type { FileEntry } from "./scan.ts";
+import { canonical } from "./canonical.js";
+import { buildManifest, type EmitOptions } from "./manifest.js";
+import type { Bindings } from "./scan.js";
+import type { FileEntry } from "./scan.js";
 
 export type ChangedEntry = {
   path: string;
@@ -27,32 +27,36 @@ function readBaselineAtRef(appRoot: string, ref: string): { files?: FileEntry[];
       cwd: appRoot,
       encoding: "utf8",
     }).trim();
-  } catch {
-    throw new Error(`void-fingerprint: not a git checkout, cannot resolve --base ${ref}`);
-  }
-  const rel = relative(toplevel, join(realpathSync(appRoot), "void.fingerprint.json")).replace(
-    /\\/g,
-    "/",
-  );
-  try {
+    const rel = relative(toplevel, join(realpathSync(appRoot), "void.fingerprint.json")).replace(
+      /\\/g,
+      "/",
+    );
     const out = execFileSync("git", ["show", `${ref}:${rel}`], { cwd: appRoot, encoding: "utf8" });
     return JSON.parse(out) as { files?: FileEntry[]; fingerprint?: string };
   } catch {
-    throw new Error(`void-fingerprint: cannot read baseline at ${ref} for ${rel}`);
+    throw new Error(`void-fingerprint: cannot read baseline at ${ref} for ${appRoot}`);
   }
 }
 
 const FIELD_SOURCES: Record<string, string> = {
   app: "package.json",
+  appType: "package.json",
+  adapter: "package.json",
   target: "void.json",
   voidJson: "void.json",
   plugins: "vite.config.ts",
   workspaceDeps: "package.json",
+  routes: "routes/, pages/, middleware/, crons/, queues/",
+  pages: "routes/, pages/, middleware/, crons/, queues/",
+  middleware: "routes/, pages/, middleware/, crons/, queues/",
+  scanDirs: "fingerprint opts",
+  extraPaths: "fingerprint opts",
+  drizzle: "drizzle config",
 };
 
 function tokenPattern(token: string): RegExp {
   const esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (token.startsWith("void/")) return new RegExp(esc);
+  if (token.startsWith("void/")) return new RegExp(`from\\s+["']${esc}["']|\\b${esc}\\b`);
   return new RegExp(`env\\.${esc}\\b|env\\[["']${esc}["']\\]`);
 }
 
@@ -65,7 +69,8 @@ export function locateToken(
   for (const f of files) {
     const lines = readFileSync(join(appRoot, f.path), "utf8").split("\n");
     for (let i = 0; i < lines.length; i++) {
-      if (re.test(lines[i])) return `${f.path}:${i + 1}`;
+      const line = lines[i];
+      if (line !== undefined && re.test(line)) return `${f.path}:${i + 1}`;
     }
   }
   return undefined;
@@ -92,7 +97,7 @@ function bindingTokenEntries(
 
 export function diffManifest(appRoot: string, opts: EmitOptions = {}): DiffResult {
   const current = buildManifest(appRoot, opts);
-  let disk: { files?: FileEntry[]; fingerprint?: string } | null = null;
+  let disk: Record<string, unknown> & { files?: FileEntry[]; fingerprint?: string; format?: unknown } | null = null;
   if (opts.baseRef) {
     disk = readBaselineAtRef(appRoot, opts.baseRef);
   } else {
@@ -109,6 +114,16 @@ export function diffManifest(appRoot: string, opts: EmitOptions = {}): DiffResul
       hash: { committed: null, computed: current.fingerprint },
       isNew: true,
     };
+  }
+  if (disk.format !== undefined && disk.format !== current.format) {
+    throw new Error(
+      `void-fingerprint: unsupported manifest format ${String(disk.format)} (expected ${current.format}) — re-run fp:emit`,
+    );
+  }
+  if (!Array.isArray(disk.files)) {
+    throw new Error(
+      `void-fingerprint: baseline at ${appRoot} is corrupt (missing files[]) — re-run fp:emit`,
+    );
   }
   const prev = new Map((disk.files ?? []).map((f) => [f.path, f.sha256]));
   const seen = new Set<string>();

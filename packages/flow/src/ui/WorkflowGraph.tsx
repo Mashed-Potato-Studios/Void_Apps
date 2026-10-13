@@ -1,5 +1,5 @@
-import React from 'react';
-import type { WorkflowExecution, WorkflowStepRecord } from '../types';
+import type { FC } from 'react';
+import type { WorkflowExecution, WorkflowStepRecord } from '../types.js';
 
 export interface WorkflowGraphProps {
   execution: WorkflowExecution;
@@ -8,7 +8,7 @@ export interface WorkflowGraphProps {
   onSendEvent?: (eventName: string) => void;
 }
 
-export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
+export const WorkflowGraph: FC<WorkflowGraphProps> = ({
   execution,
   steps = [],
   onRetry,
@@ -205,7 +205,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         </div>
       )}
 
-      {execution.output && (
+      {execution.output !== undefined && execution.output !== null && (
         <div
           style={{
             marginTop: '1.5rem',

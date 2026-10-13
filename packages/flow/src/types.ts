@@ -16,7 +16,7 @@ export type StepStatus = 'running' | 'completed' | 'failed' | 'skipped';
 
 export type StepType = 'run' | 'sleep' | 'wait_for_event' | 'send_queue';
 
-export type DurationString = `${number}${'s' | 'm' | 'h' | 'd'}` | string;
+export type DurationString = `${number}${'s' | 'm' | 'h' | 'd'}`;
 
 export interface WorkflowExecution<TInput = unknown, TOutput = unknown> {
   id: string;

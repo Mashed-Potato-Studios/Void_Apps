@@ -1,5 +1,5 @@
 import { defineHandler } from 'void';
-import { initialUsers, initialPosts } from '@void-monorepo/db';
+import { initialUsers, initialPosts } from '@void-monorepo/db/seed';
 
 export const GET = defineHandler(async () => {
   return {

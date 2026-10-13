@@ -1,5 +1,5 @@
 import { defineHandler } from 'void';
-import { flowClient } from '../../../workflows/onboarding';
+import { flowClient } from '../../../workflows/onboarding.js';
 
 // POST /api/v1/workflows/events - Dispatch an event to resume waiting workflows
 export const POST = defineHandler(async ({ request }: { request: Request }) => {

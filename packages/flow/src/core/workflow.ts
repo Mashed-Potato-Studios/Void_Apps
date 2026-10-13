@@ -1,4 +1,4 @@
-import type { WorkflowDefinition, WorkflowHandler } from '../types';
+import type { WorkflowDefinition, WorkflowHandler } from '../types.js';
 
 /**
  * Creates and registers a type-safe Void Flow durable workflow

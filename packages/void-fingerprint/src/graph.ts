@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { canonical } from "./canonical.ts";
-import type { Manifest } from "./manifest.ts";
+import { canonical } from "./canonical.js";
+import type { Manifest } from "./manifest.js";
 
 export type Graph = {
   format: 1;
@@ -25,12 +25,7 @@ export function buildGraph(root: string, appDirs: string[]): Graph {
   for (const dir of appDirs) {
     const m = readCommitted(dir);
     const name = m.app || relative(root, dir);
-    const deps = { ...(m.workspaceDeps ?? {}) };
-    for (const k of Object.keys(deps).sort()) {
-      const v = deps[k];
-      delete deps[k];
-      deps[k] = v;
-    }
+    const deps = Object.fromEntries(Object.entries(m.workspaceDeps ?? {}).sort(([a], [b]) => (a < b ? -1 : 1)));
     apps[name] = { fingerprint: m.fingerprint, deps };
   }
   const names = new Set(Object.keys(apps));

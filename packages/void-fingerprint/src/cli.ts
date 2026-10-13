@@ -1,29 +1,14 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { checkFingerprint } from "./check.ts";
-import { diffManifest } from "./diff.ts";
-import { buildGraph, writeGraph, type Graph } from "./graph.ts";
-import { emitManifest } from "./emit.ts";
-import type { EmitOptions } from "./manifest.ts";
-
-const EXTRA_BY_APP: Record<string, string[]> = {
-  "@void-monorepo/api": ["workflows"],
-};
+import { checkDiffResult } from "./check.js";
+import { diffManifest } from "./diff.js";
+import { buildGraph, writeGraph, type Graph } from "./graph.js";
+import { emitManifest } from "./emit.js";
+import { optsForApp } from "./manifest.js";
 
 const USAGE = "usage: void-fingerprint <emit|diff|check|graph> [app-path] [--all] [--json] [--ci] [--base <ref>] [--format mermaid]";
 
-function readPkgName(appRoot: string): string {
-  try {
-    return (JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8")) as { name: string })
-      .name;
-  } catch {
-    return "";
-  }
-}
-
-function optsFor(appRoot: string, baseRef?: string): EmitOptions {
-  return { extraPaths: EXTRA_BY_APP[readPkgName(appRoot)] ?? [], ...(baseRef ? { baseRef } : {}) };
-}
+const optsFor = optsForApp;
 
 function hasVoidJson(dir: string): boolean {
   try {
@@ -44,7 +29,8 @@ function resolveApps(cwd: string, all: boolean, positional?: string): string[] {
       } catch {
         return false;
       }
-    });
+    })
+    .sort();
 }
 
 function short(hash: string | null): string {
@@ -83,6 +69,7 @@ export async function run(argv: string[], cwd: string): Promise<number> {
   let format = "";
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (a === undefined) continue;
     if (a === "--base") {
       baseRef = args[i + 1];
       i++;
@@ -174,15 +161,15 @@ export async function run(argv: string[], cwd: string): Promise<number> {
     case "check": {
       let code = 0;
       for (const a of apps) {
-        let c;
+        let d;
         try {
-          c = diffManifest(a, optsFor(a, baseRef));
+          d = diffManifest(a, optsFor(a, baseRef));
         } catch (e) {
           console.log(`error: ${a}: ${e instanceof Error ? e.message : String(e)}`);
           code = 2;
           continue;
         }
-        if (c.isNew && !baseRef) {
+        if (d.isNew && !baseRef) {
           if (ci) {
             console.log(`${a}: error: no committed manifest (run fp:emit)`);
             code = 2;
@@ -191,7 +178,7 @@ export async function run(argv: string[], cwd: string): Promise<number> {
           }
           continue;
         }
-        const res = checkFingerprint(a, optsFor(a, baseRef));
+        const res = checkDiffResult(d);
         if (!res.clean) {
           code = code === 2 ? 2 : 1;
           console.log(`${a}: drift: ${res.drift.join(", ")}`);

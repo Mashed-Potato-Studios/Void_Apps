@@ -1,3 +1,2 @@
-export * from './schema';
-export * from './client';
-export * from './seed';
+export * from './schema/index.js';
+export * from './client.js';

@@ -3,10 +3,27 @@
   "version": "0.1.0",
   "private": true,
   "description": "Shared tooling and TypeScript configurations for Void Cloud monorepo",
+  "license": "MIT",
   "main": "index.js",
   "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json",
     "./tsconfig/base.json": "./tsconfig/base.json",
     "./tsconfig/app.json": "./tsconfig/app.json",
+    "./tsconfig/server.json": "./tsconfig/server.json",
     "./tsconfig/package.json": "./tsconfig/package.json"
-  }
+  },
+  "files": [
+    "index.js",
+    "tsconfig",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json"
+  },
+  "type": "module"
 }

@@ -4,7 +4,7 @@ import type {
   WorkflowStepRecord,
   WorkflowEventRecord,
   WorkflowStatus,
-} from '../types';
+} from '../types.js';
 
 /**
  * In-Memory storage adapter for testing and lightweight runtime environments.
@@ -91,7 +91,7 @@ export class MemoryStorageAdapter implements FlowStorageAdapter {
     eventData: Omit<WorkflowEventRecord, 'id' | 'createdAt' | 'consumed'>
   ): Promise<WorkflowEventRecord> {
     const event: WorkflowEventRecord = {
-      id: `evt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `evt_${crypto.randomUUID()}`,
       ...eventData,
       consumed: false,
       createdAt: new Date().toISOString(),

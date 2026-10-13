@@ -1,4 +1,3 @@
-import React from 'react';
 import { Header, Card, Button } from '@void-monorepo/ui';
 import { WorkflowGraph } from '@void-monorepo/flow/ui';
 import type { WorkflowExecution, WorkflowStepRecord } from '@void-monorepo/flow';

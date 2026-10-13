@@ -1,5 +1,5 @@
 import { defineHandler } from 'void';
-import { flowClient, userOnboardingWorkflow } from '../../../workflows/onboarding';
+import { flowClient, userOnboardingWorkflow } from '../../../workflows/onboarding.js';
 
 // GET /api/v1/workflows - List all executions or get specific execution by id
 export const GET = defineHandler(async ({ request }: { request: Request }) => {

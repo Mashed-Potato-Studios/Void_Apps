@@ -3,9 +3,9 @@ import type {
   FlowStorageAdapter,
   WorkflowExecution,
   WorkflowStepRecord,
-} from './types';
-import { WorkflowEngine } from './core/engine';
-import { MemoryStorageAdapter } from './storage/adapter';
+} from './types.js';
+import { WorkflowEngine } from './core/engine.js';
+import { MemoryStorageAdapter } from './storage/adapter.js';
 
 export interface VoidFlowClientOptions {
   storage?: FlowStorageAdapter;

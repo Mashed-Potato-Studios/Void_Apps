@@ -10,14 +10,16 @@
     "./permissions": "./src/permissions.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test --test-concurrency=1 --import ./test/hooks/register.mjs \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@void-monorepo/types": "workspace:*",
-    "@void-monorepo/db": "workspace:*"
+    "@void-monorepo/types": "workspace:*"
   },
   "devDependencies": {
     "@void-monorepo/config": "workspace:*",
     "typescript": "^5.7.3"
-  }
+  },
+  "type": "module"
 }

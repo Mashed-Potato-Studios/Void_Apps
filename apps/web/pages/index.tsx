@@ -1,4 +1,3 @@
-import React from 'react';
 import { Header, Card, Button } from '@void-monorepo/ui';
 import '@void-monorepo/ui/styles.css';
 

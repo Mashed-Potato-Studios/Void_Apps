@@ -1,5 +1,5 @@
 import type { CronExecutionResult } from '@void-monorepo/types';
-import { flowClient } from '../workflows/onboarding';
+import { flowClient } from '../workflows/onboarding.js';
 
 /**
  * Void Scheduled Cron Job

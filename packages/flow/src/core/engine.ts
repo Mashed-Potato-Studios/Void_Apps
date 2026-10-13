@@ -2,16 +2,21 @@ import type {
   WorkflowDefinition,
   FlowStorageAdapter,
   WorkflowExecution,
-} from '../types';
-import { StepContextImpl, WorkflowPauseSignal } from './step';
+} from '../types.js';
+import { StepContextImpl, WorkflowPauseSignal } from './step.js';
 
 export class WorkflowEngine {
   private workflows = new Map<string, WorkflowDefinition<any, any>>();
+  private readonly storage: FlowStorageAdapter;
+  private readonly queueDispatcher?: (queueName: string, payload: unknown) => Promise<void>;
 
   constructor(
-    private readonly storage: FlowStorageAdapter,
-    private readonly queueDispatcher?: (queueName: string, payload: unknown) => Promise<void>
-  ) {}
+    storage: FlowStorageAdapter,
+    queueDispatcher?: (queueName: string, payload: unknown) => Promise<void>
+  ) {
+    this.storage = storage;
+    this.queueDispatcher = queueDispatcher;
+  }
 
   registerWorkflow<TInput, TOutput>(workflow: WorkflowDefinition<TInput, TOutput>): void {
     this.workflows.set(workflow.name, workflow);
@@ -22,7 +27,12 @@ export class WorkflowEngine {
   }
 
   /**
-   * Start or resume execution of a workflow
+   * Start or resume execution of a workflow.
+   *
+   * Resume semantics (when `options.executionId` matches a stored execution):
+   * - the stored execution's `workflowName` must match `workflowName`, else throws;
+   * - the stored execution's `input` is reused and the new `input` argument is
+   *   ignored, keeping replays deterministic.
    */
   async execute<TInput, TOutput>(
     workflowName: string,
@@ -34,24 +44,34 @@ export class WorkflowEngine {
       throw new Error(`Workflow "${workflowName}" is not registered in Void Flow engine.`);
     }
 
-    const executionId =
-      options?.executionId || `wf_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const executionId = options?.executionId ?? crypto.randomUUID();
 
     let execution = await this.storage.getExecution(executionId);
+    let effectiveInput: TInput;
 
     if (!execution) {
+      effectiveInput = input;
       execution = await this.storage.createExecution({
         id: executionId,
         workflowName,
         status: 'running',
-        input,
+        input: effectiveInput,
         currentStepIndex: 0,
         createdAt: new Date().toISOString(),
       });
     } else {
+      if (execution.workflowName !== workflowName) {
+        throw new Error(
+          `Cannot resume execution "${executionId}" as workflow "${workflowName}": it belongs to workflow "${execution.workflowName}".`
+        );
+      }
+      // Resume: reuse stored input so replays stay deterministic; ignore new input.
+      effectiveInput = execution.input as TInput;
       execution = await this.storage.updateExecution(executionId, {
         status: 'running',
         error: undefined,
+        wakeUpAt: undefined,
+        waitingForEventName: undefined,
       });
     }
 
@@ -65,7 +85,7 @@ export class WorkflowEngine {
       // Execute the workflow logic with deterministic step memoization
       const output = await workflow.handler({
         step: stepContext,
-        input,
+        input: effectiveInput,
         executionId,
       });
 
@@ -73,6 +93,7 @@ export class WorkflowEngine {
       const completedExecution = await this.storage.updateExecution(executionId, {
         status: 'completed',
         output,
+        error: undefined,
         completedAt: new Date().toISOString(),
         wakeUpAt: undefined,
         waitingForEventName: undefined,
@@ -98,6 +119,8 @@ export class WorkflowEngine {
         status: 'failed',
         error: errorMessage,
         completedAt: new Date().toISOString(),
+        wakeUpAt: undefined,
+        waitingForEventName: undefined,
       });
 
       return failedExecution as WorkflowExecution<TInput, TOutput>;
@@ -114,19 +137,27 @@ export class WorkflowEngine {
 
     for (const execution of sleepingExecutions) {
       if (execution.wakeUpAt && new Date(execution.wakeUpAt).getTime() <= now) {
-        // Mark step as completed and resume
-        const steps = await this.storage.getStepsForExecution(execution.id);
-        const lastStep = steps[steps.length - 1];
-        if (lastStep && lastStep.stepType === 'sleep') {
-          lastStep.status = 'completed';
-          lastStep.completedAt = new Date().toISOString();
-          await this.storage.saveStep(lastStep);
-        }
+        try {
+          // Mark step as completed and resume
+          const steps = await this.storage.getStepsForExecution(execution.id);
+          const lastStep = steps[steps.length - 1];
+          if (lastStep && lastStep.stepType === 'sleep') {
+            lastStep.status = 'completed';
+            lastStep.completedAt = new Date().toISOString();
+            await this.storage.saveStep(lastStep);
+          }
 
-        await this.execute(execution.workflowName, execution.input, {
-          executionId: execution.id,
-        });
-        resumedCount++;
+          await this.execute(execution.workflowName, execution.input, {
+            executionId: execution.id,
+          });
+          resumedCount++;
+        } catch (err) {
+          // One failing execution must not abort the loop.
+          console.error(
+            `[Void Flow] Failed to resume sleeping execution "${execution.id}":`,
+            err
+          );
+        }
       }
     }
 

@@ -52,6 +52,7 @@ export const userOnboardingWorkflow = createWorkflow<OnboardingInput, Onboarding
 
     // Step 5: Wait for User Action Event (e.g. Email verification or First Project Creation)
     const verification = await step.waitForEvent<{ verifiedAt: string }>('user-email-verified', {
+      eventName: 'user-email-verified',
       timeout: '7d',
     });
 

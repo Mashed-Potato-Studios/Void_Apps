@@ -22,6 +22,7 @@ export function sha256Hex(s: string): string {
 }
 
 export function hashFile(path: string): string {
-  const raw = readFileSync(path, "utf8");
-  return sha256Hex(raw.replace(/\r\n/g, "\n"));
+  const raw = readFileSync(path);
+  const text = raw.toString("utf8");
+  return sha256Hex(text.replace(/\r\n?/g, "\n"));
 }

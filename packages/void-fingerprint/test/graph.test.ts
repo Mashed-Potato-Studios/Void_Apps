@@ -26,8 +26,8 @@ describe("graph", () => {
       const g = buildGraph(root, [a, b]);
       assert.equal(g.format, 1);
       assert.deepEqual(Object.keys(g.apps).sort(), ["app-a", "app-b"]);
-      assert.deepEqual(g.apps["app-a"].deps, { "@void-monorepo/db": "workspace:*" });
-      assert.match(g.apps["app-a"].fingerprint, /^[0-9a-f]{64}$/);
+      assert.deepEqual(g.apps["app-a"]?.deps, { "@void-monorepo/db": "workspace:*" });
+      assert.match(g.apps["app-a"]?.fingerprint ?? "", /^[0-9a-f]{64}$/);
       assert.deepEqual(g.crossApp, []);
       const path = writeGraph(root, [a, b]);
       assert.equal(path, join(root, "fingerprint.graph.json"));

@@ -3,7 +3,7 @@ import type {
   DurationString,
   FlowStorageAdapter,
   WorkflowStepRecord,
-} from '../types';
+} from '../types.js';
 
 /**
  * Utility to parse duration strings into milliseconds
@@ -11,6 +11,11 @@ import type {
  */
 export function parseDurationMs(duration: DurationString | number): number {
   if (typeof duration === 'number') {
+    if (!Number.isFinite(duration) || duration < 0) {
+      throw new Error(
+        `Invalid duration: ${duration}. Expected a finite, non-negative number of milliseconds.`
+      );
+    }
     return duration;
   }
 
@@ -20,6 +25,9 @@ export function parseDurationMs(duration: DurationString | number): number {
   }
 
   const [, valStr, unit] = match;
+  if (valStr === undefined || unit === undefined) {
+    throw new Error(`Invalid duration format: "${duration}". Expected format like "30s", "10m", "2h", "7d".`);
+  }
   const val = parseInt(valStr, 10);
 
   switch (unit) {
@@ -40,22 +48,37 @@ export function parseDurationMs(duration: DurationString | number): number {
  * Signal error thrown to halt execution gracefully when sleeping or waiting for event.
  */
 export class WorkflowPauseSignal extends Error {
+  public readonly reason: 'sleep' | 'wait_for_event';
+  public readonly stepId: string;
+  public readonly metadata?: { wakeUpAt?: string; eventName?: string };
+
   constructor(
-    public readonly reason: 'sleep' | 'wait_for_event',
-    public readonly stepId: string,
-    public readonly metadata?: { wakeUpAt?: string; eventName?: string }
+    reason: 'sleep' | 'wait_for_event',
+    stepId: string,
+    metadata?: { wakeUpAt?: string; eventName?: string }
   ) {
     super(`Workflow paused: ${reason} at step "${stepId}"`);
     this.name = 'WorkflowPauseSignal';
+    this.reason = reason;
+    this.stepId = stepId;
+    this.metadata = metadata;
   }
 }
 
 export class StepContextImpl implements StepContext {
+  private readonly executionId: string;
+  private readonly storage: FlowStorageAdapter;
+  private readonly queueDispatcher?: (queueName: string, payload: unknown) => Promise<void>;
+
   constructor(
-    private readonly executionId: string,
-    private readonly storage: FlowStorageAdapter,
-    private readonly queueDispatcher?: (queueName: string, payload: unknown) => Promise<void>
-  ) {}
+    executionId: string,
+    storage: FlowStorageAdapter,
+    queueDispatcher?: (queueName: string, payload: unknown) => Promise<void>
+  ) {
+    this.executionId = executionId;
+    this.storage = storage;
+    this.queueDispatcher = queueDispatcher;
+  }
 
   async run<T>(stepId: string, fn: () => Promise<T>): Promise<T> {
     const existingStep = await this.storage.getStep(this.executionId, stepId);
@@ -67,7 +90,7 @@ export class StepContextImpl implements StepContext {
 
     const startTime = Date.now();
     const stepRecord: WorkflowStepRecord = {
-      id: `step_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `step_${crypto.randomUUID()}`,
       executionId: this.executionId,
       stepId,
       stepType: 'run',
@@ -114,7 +137,7 @@ export class StepContextImpl implements StepContext {
     const wakeUpAt = new Date(Date.now() + durationMs).toISOString();
 
     const stepRecord: WorkflowStepRecord = {
-      id: `step_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `step_${crypto.randomUUID()}`,
       executionId: this.executionId,
       stepId,
       stepType: 'sleep',
@@ -142,7 +165,7 @@ export class StepContextImpl implements StepContext {
     const event = await this.storage.consumeEvent(options.eventName, this.executionId);
     if (event) {
       const stepRecord: WorkflowStepRecord = {
-        id: `step_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        id: `step_${crypto.randomUUID()}`,
         executionId: this.executionId,
         stepId,
         stepType: 'wait_for_event',
@@ -157,7 +180,7 @@ export class StepContextImpl implements StepContext {
     }
 
     const stepRecord: WorkflowStepRecord = {
-      id: `step_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      id: `step_${crypto.randomUUID()}`,
       executionId: this.executionId,
       stepId,
       stepType: 'wait_for_event',

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { canonical, sha256Hex } from "./canonical.ts";
-import { inferBindings, scanAppFiles, type Bindings, type FileEntry, SCAN_DIRS } from "./scan.ts";
+import { canonical, sha256Hex } from "./canonical.js";
+import { inferBindings, scanAppFiles, type Bindings, type FileEntry, SCAN_DIRS } from "./scan.js";
 
 export type Manifest = {
   format: 1;
@@ -25,6 +25,29 @@ export type Manifest = {
 
 export type EmitOptions = { extraPaths?: string[]; baseRef?: string };
 
+// Never put secrets in void.json: the full snapshot is committed verbatim
+// into void.fingerprint.json and printed by `diff --json`.
+export const EXTRA_BY_APP: Record<string, string[]> = {
+  "@void-monorepo/api": ["workflows"],
+};
+
+function readPkgName(appRoot: string): string {
+  try {
+    return (JSON.parse(readFileSync(join(appRoot, "package.json"), "utf8")) as { name: string })
+      .name;
+  } catch {
+    return "";
+  }
+}
+
+/** Shared mapping used by both the CLI and the Vite plugin so snapshots agree. */
+export function optsForApp(appRoot: string, baseRef?: string): EmitOptions {
+  return {
+    extraPaths: EXTRA_BY_APP[readPkgName(appRoot)] ?? [],
+    ...(baseRef ? { baseRef } : {}),
+  };
+}
+
 function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
@@ -37,7 +60,9 @@ function parsePlugins(appRoot: string): string[] {
     return [];
   }
   const arrayBody = src.match(/plugins\s*:\s*\[(.*?)\]/s)?.[1] ?? "";
-  return [...arrayBody.matchAll(/(\w+)\s*\(/g)].map((m) => m[1]);
+  return [...arrayBody.matchAll(/(\w+)\s*\(/g)]
+    .map((m) => m[1])
+    .filter((x): x is string => x !== undefined);
 }
 
 export function manifestFingerprint(m: Omit<Manifest, "fingerprint">): string {

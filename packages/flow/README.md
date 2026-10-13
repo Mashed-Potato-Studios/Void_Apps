@@ -34,7 +34,10 @@ export const userOnboardingWorkflow = createWorkflow('user-onboarding', async ({
   });
 
   // Step 4: Wait for user email verification or manager approval
-  const approval = await step.waitForEvent('email-verified', { timeout: '7d' });
+  const approval = await step.waitForEvent('wait-email-verified', {
+    eventName: 'email-verified',
+    timeout: '7d',
+  });
 
   // Step 5: Send final welcome email via Queue
   await step.sendQueue('email-queue', {

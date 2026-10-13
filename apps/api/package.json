@@ -20,6 +20,7 @@
     "@void-monorepo/types": "workspace:*"
   },
   "devDependencies": {
+    "@types/node": "^22",
     "@void-monorepo/config": "workspace:*",
     "typescript": "^5.7.3",
     "vite": "^6.0.0",

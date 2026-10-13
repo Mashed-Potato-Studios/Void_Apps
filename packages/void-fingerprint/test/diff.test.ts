@@ -42,11 +42,13 @@ describe("diffManifest", () => {
       const d = diffManifest(appRoot);
       assert.equal(d.clean, false);
       assert.equal(d.changed.length, 1);
-      assert.equal(d.changed[0].path, "routes/hello.ts");
-      assert.match(d.changed[0].from ?? "", /^[0-9a-f]{64}$/);
-      assert.match(d.changed[0].to ?? "", /^[0-9a-f]{64}$/);
-      assert.notEqual(d.changed[0].from, d.changed[0].to);
-      assert.equal(d.changed[0].evidence, "routes/hello.ts");
+      const entry = d.changed[0];
+      assert.ok(entry);
+      assert.equal(entry.path, "routes/hello.ts");
+      assert.match(entry.from ?? "", /^[0-9a-f]{64}$/);
+      assert.match(entry.to ?? "", /^[0-9a-f]{64}$/);
+      assert.notEqual(entry.from, entry.to);
+      assert.equal(entry.evidence, "routes/hello.ts");
       assert.notEqual(d.hash.committed, d.hash.computed);
     } finally {
       writeFileSync(join(appRoot, "routes/hello.ts"), orig);
@@ -65,7 +67,7 @@ describe("diffManifest", () => {
       const d = diffManifest(appRoot);
       assert.equal(d.clean, false);
       assert.deepEqual(d.changed.map((c) => c.path), ["voidJson"]);
-      assert.equal(d.changed[0].evidence, "void.json");
+      assert.equal(d.changed[0]?.evidence, "void.json");
     } finally {
       writeFileSync(voidJsonPath, orig);
       clearBaseline();

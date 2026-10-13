@@ -6,12 +6,17 @@
   "license": "MIT",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.6"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
-    ".": "./dist/index.js",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {
@@ -19,13 +24,26 @@
   },
   "files": [
     "dist",
-    "bin"
+    "bin",
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/assert-dts.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test --test-concurrency=1 \"test/**/*.test.ts\"",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test --test-concurrency=1 --import ./test/hooks/register.mjs \"test/**/*.test.ts\"",
+    "preversion": "pnpm run build && pnpm run test",
+    "release:dry": "pnpm run build && npm pack --dry-run",
     "prepublishOnly": "pnpm run build"
+  },
+  "peerDependencies": {
+    "vite": "^6"
+  },
+  "peerDependenciesMeta": {
+    "vite": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22",

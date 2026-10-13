@@ -1,6 +1,5 @@
-import React from 'react';
 import { Header, Card, Button } from '@void-monorepo/ui';
-import { initialUsers, initialPosts } from '@void-monorepo/db';
+import { initialUsers, initialPosts } from '@void-monorepo/db/seed';
 import '@void-monorepo/ui/styles.css';
 
 export const head = () => ({

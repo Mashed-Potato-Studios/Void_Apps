@@ -1,9 +1,9 @@
-import * as schema from './schema';
+import type { UserInsert, PostInsert } from './schema/index.js';
 
 /**
  * Seed data for development and initial environments
  */
-export const initialUsers = [
+export const initialUsers: UserInsert[] = [
   {
     id: 'user_admin_01',
     name: 'Void Admin',
@@ -20,7 +20,7 @@ export const initialUsers = [
   },
 ];
 
-export const initialPosts = [
+export const initialPosts: PostInsert[] = [
   {
     id: 'post_01',
     title: 'Deploying at Warp Speed with Void Cloud',
