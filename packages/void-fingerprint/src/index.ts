@@ -6,3 +6,4 @@ export * from "./emit.ts";
 export * from "./diff.ts";
 export * from "./check.ts";
 export * from "./graph.ts";
+export * from "./plugin.ts";

@@ -11,6 +11,20 @@
       "cache": false,
       "persistent": true
     },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "fp:emit": {
+      "cache": false
+    },
+    "fp:check": {
+      "cache": false,
+      "inputs": ["$TURBO_DEFAULT$", ".env*", "void.json", "void.fingerprint.json"]
+    },
+    "fp:graph": {
+      "cache": false,
+      "dependsOn": ["fp:check"]
+    },
     "lint": {
       "dependsOn": ["^lint"]
     },

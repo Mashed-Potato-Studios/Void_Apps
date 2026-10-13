@@ -10,6 +10,8 @@
     "dev:api": "turbo run dev --filter=@void-monorepo/api",
     "dev:admin": "turbo run dev --filter=@void-monorepo/admin",
     "build": "turbo run build",
+    "test": "turbo run test",
+    "fp:check:all": "turbo run fp:check",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean && rm -rf node_modules .turbo",
