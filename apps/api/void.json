@@ -1,0 +1,18 @@
+{
+  "$schema": "https://void.cloud/schema.json",
+  "target": "cloudflare",
+  "routing": {
+    "headers": {
+      "/api/*": [
+        "Access-Control-Allow-Origin: *",
+        "Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers: Content-Type, Authorization",
+        "Content-Type: application/json"
+      ]
+    }
+  },
+  "worker": {
+    "compatibility_date": "2026-01-01",
+    "compatibility_flags": ["nodejs_compat"]
+  }
+}

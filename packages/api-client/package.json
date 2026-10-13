@@ -1,0 +1,21 @@
+{
+  "name": "@void-monorepo/api-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed fetch client for consuming Void Cloud backend APIs and microservices",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@void-monorepo/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@void-monorepo/config": "workspace:*",
+    "typescript": "^5.7.3"
+  }
+}

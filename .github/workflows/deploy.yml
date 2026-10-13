@@ -1,0 +1,71 @@
+name: Void Cloud Monorepo CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Lint & Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck Workspace
+        run: pnpm run typecheck
+
+      - name: Build Packages & Apps
+        run: pnpm run build
+
+  deploy:
+    name: Deploy to Void Cloud
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Deploy Apps to Void Cloud
+        env:
+          VOID_TOKEN: ${{ secrets.VOID_TOKEN }}
+        run: |
+          echo "Deploying Web App..."
+          pnpm run void:deploy:web
+          echo "Deploying API Service..."
+          pnpm run void:deploy:api
+          echo "Deploying Admin Portal..."
+          pnpm run void:deploy:admin

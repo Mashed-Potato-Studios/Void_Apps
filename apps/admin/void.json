@@ -1,0 +1,15 @@
+{
+  "$schema": "https://void.cloud/schema.json",
+  "target": "cloudflare",
+  "auth": {
+    "providers": ["email", "github"]
+  },
+  "head": {
+    "titleTemplate": "%s | Void Admin Ops",
+    "htmlAttrs": { "lang": "en" }
+  },
+  "worker": {
+    "compatibility_date": "2026-01-01",
+    "compatibility_flags": ["nodejs_compat"]
+  }
+}

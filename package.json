@@ -1,0 +1,28 @@
+{
+  "name": "void-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Production-grade Void Cloud monorepo with Vite, pnpm workspaces, and Turborepo",
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "dev:web": "turbo run dev --filter=@void-monorepo/web",
+    "dev:api": "turbo run dev --filter=@void-monorepo/api",
+    "dev:admin": "turbo run dev --filter=@void-monorepo/admin",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "clean": "turbo run clean && rm -rf node_modules .turbo",
+    "db:generate": "turbo run db:generate --filter=@void-monorepo/db",
+    "db:migrate": "turbo run db:migrate --filter=@void-monorepo/db",
+    "db:seed": "turbo run db:seed --filter=@void-monorepo/db",
+    "void:deploy": "turbo run void:deploy",
+    "void:deploy:web": "pnpm --filter @void-monorepo/web void:deploy",
+    "void:deploy:api": "pnpm --filter @void-monorepo/api void:deploy",
+    "void:deploy:admin": "pnpm --filter @void-monorepo/admin void:deploy"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.4",
+    "typescript": "^5.7.3"
+  }
+}
