@@ -20,7 +20,7 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "void-fingerprint": "./bin/void-fingerprint.mjs"
+    "void-fingerprint": "bin/void-fingerprint.mjs"
   },
   "files": [
     "dist",
