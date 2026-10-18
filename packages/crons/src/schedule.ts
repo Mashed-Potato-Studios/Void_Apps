@@ -110,4 +110,48 @@ export async function runScheduleOnce(appRoot: string, opts: ScheduleOptions): P
   return { fired, skipped };
 }
 
+export interface ScheduleState {
+  checkpointMs: number;
+  /** expr → last fired minute bucket (Math.floor(dueMs / 60_000)). */
+  firedMinutes: Map<string, number>;
+}
+
+export function initScheduleState(nowMs: number): ScheduleState {
+  return { checkpointMs: nowMs, firedMinutes: new Map() };
+}
+
+/** One scheduling window: due since checkpoint → per-expr once-per-minute fire → checkpoint advances. */
+export async function tickSchedule(
+  state: ScheduleState,
+  targets: { active: Map<string, string>; skipped: ScheduleSkip[] },
+  opts: {
+    origin: string;
+    devToken?: string;
+    cronSecret?: string;
+    fetchImpl?: typeof fetch;
+    nowMs: number;
+    appendActivity?: { appRoot: string };
+  },
+): Promise<{ state: ScheduleState; fired: CronActivityEntry[]; skipped: ScheduleSkip[] }> {
+  const due = computeDue([...targets.active.keys()], state.checkpointMs, opts.nowMs);
+  const fired: CronActivityEntry[] = [];
+  const skipped: ScheduleSkip[] = [];
+  for (const { expr, dueMs } of due) {
+    const minute = Math.floor(dueMs / 60_000);
+    if (state.firedMinutes.get(expr) === minute) continue;
+    state.firedMinutes.set(expr, minute);
+    const res = await triggerExpression(expr, targets.active.get(expr)!, {
+      origin: opts.origin,
+      devToken: opts.devToken,
+      cronSecret: opts.cronSecret,
+      fetchImpl: opts.fetchImpl,
+      scheduledTime: dueMs,
+    });
+    if (res.entry) fired.push(res.entry);
+    else if (res.reason) skipped.push({ cron: expr, jobName: targets.active.get(expr)!, reason: res.reason });
+  }
+  if (fired.length > 0 && opts.appendActivity) appendActivityLog(opts.appendActivity.appRoot, fired);
+  return { state: { checkpointMs: opts.nowMs, firedMinutes: state.firedMinutes }, fired, skipped };
+}
+
 export type { CronJob };

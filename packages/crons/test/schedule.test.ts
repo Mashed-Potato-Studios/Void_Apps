@@ -99,3 +99,42 @@ describe("runScheduleOnce", () => {
     rmSync(app, { recursive: true, force: true });
   });
 });
+
+import { initScheduleState, tickSchedule, collectScheduleTargets } from "../src/schedule.ts";
+import { scanCronFiles } from "../src/scan.ts";
+
+describe("tickSchedule", () => {
+  // pinned Review Focus inputs 2 & 3: shared expr fires once; overlapping windows don't double-fire
+  it("fires an expression once per matched minute even when shared by two jobs or re-ticked", async () => {
+    const SHARED5 = `export const cron = ['*/5 * * * *'];\nexport default async () => {};\n`;
+    const app = makeSchedApp({ "heartbeat.ts": SHARED5, "cleanup.ts": SHARED5 });
+    const jobs = scanCronFiles(app);
+    const targets = collectScheduleTargets(jobs, new Set());
+    const calls: { url: string; cron: string }[] = [];
+    const fetch = okFetch(calls);
+    const T0 = Date.UTC(2026, 9, 18, 10, 4, 30);
+    let state = initScheduleState(T0);
+    const t1 = await tickSchedule(state, targets, {
+      origin: "http://localhost:5173",
+      fetchImpl: fetch,
+      nowMs: T0 + 90_000, // 10:06:00 crossing the :05 due
+    });
+    state = t1.state;
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]?.cron, "*/5 * * * *");
+    const t2 = await tickSchedule(state, targets, {
+      origin: "http://localhost:5173",
+      fetchImpl: fetch,
+      nowMs: T0 + 90_000 + 20_000,
+    });
+    assert.equal(calls.length, 1);
+    assert.deepEqual(t2.fired, []);
+    await tickSchedule(state, targets, {
+      origin: "http://localhost:5173",
+      fetchImpl: fetch,
+      nowMs: T0 + 360_000, // 10:10:30 crossing the :10 due
+    });
+    assert.equal(calls.length, 2);
+    rmSync(app, { recursive: true, force: true });
+  });
+});
