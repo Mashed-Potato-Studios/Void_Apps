@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scanCronFiles } from "../src/scan.ts";
@@ -394,6 +394,126 @@ describe("void-crons list preview", () => {
     } finally {
       console.log = orig;
       rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("review-fix regressions", () => {
+  // Fix B: disabled job must appear once in skip output, never twice.
+  it("schedule --once lists a disabled job exactly once (json and text)", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT, "cleanup.ts": CLEANUP });
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const restore = stubFetch(calls);
+    try {
+      // panel-style toggle: write manifest, flip disabled only (jobs[].status untouched)
+      emitCronManifest(app);
+      const raw = JSON.parse(readFileSync(join(app, "void.crons.json"), "utf8")) as { disabled: string[] };
+      raw.disabled = ["cleanup"];
+      writeFileSync(join(app, "void.crons.json"), JSON.stringify(raw, null, 2));
+      assert.equal(await run(["schedule", "--once", app, "--json"], process.cwd()), 0);
+      const out = JSON.parse(logs.find((l) => l.startsWith("{")) ?? "{}");
+      const cleanupSkips = (out.skipped as { jobName: string }[]).filter((s) => s.jobName === "cleanup");
+      assert.equal(cleanupSkips.length, 1);
+      logs.length = 0;
+      assert.equal(await run(["schedule", "--once", app], process.cwd()), 0);
+      const text = logs.join("\n");
+      assert.equal((text.match(/job "cleanup" is disabled/g) ?? []).length, 1);
+      // heartbeat still fires; cleanup skipped exactly once
+      assert.match(text, /caught up \(1 fired, 1 skipped\)/);
+    } finally {
+      restore();
+      console.log = orig;
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  // Fix E: behavior-identical reorder is not drift; panel disabled-toggle is not drift.
+  it("detectDrift ignores expression order and manifest-only disable toggles", () => {
+    const app = makeApp({ "cleanup.ts": CLEANUP, "heartbeat.ts": HEARTBEAT });
+    try {
+      emitCronManifest(app);
+      const manifest = readCronManifest(app);
+      assert.ok(manifest);
+      writeFileSync(
+        join(app, "crons", "cleanup.ts"),
+        `export const cron = ['30 * * * *', '0 * * * *'];\nexport default async () => {};\n`,
+      );
+      assert.deepEqual(detectDrift(manifest, scanCronFiles(app, { disabled: manifest.disabled })), []);
+      // panel path: disable by name via manifest.disabled only
+      const disabledManifest = { ...manifest, disabled: ["heartbeat"] };
+      assert.deepEqual(
+        detectDrift(disabledManifest, scanCronFiles(app, { disabled: ["heartbeat"] })),
+        [],
+      );
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  // Fix H: whole crons/ deletion drifts and check exits 1 through the CLI.
+  it("check exits 1 when crons dir is gone after emit", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    try {
+      emitCronManifest(app);
+      rmSync(join(app, "crons"), { recursive: true, force: true });
+      assert.equal(await run(["check", app], process.cwd()), 1);
+      assert.ok(logs.join("\n").includes("-crons/heartbeat.ts removed"));
+    } finally {
+      console.log = orig;
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  // Fix F: a non-cron selector that matches no job must error, never fire a garbage stub.
+  it("trigger errors on unknown non-cron selector without firing", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const restore = stubFetch(calls);
+    try {
+      assert.equal(await run(["trigger", "ghost-job", app], process.cwd()), 1);
+      assert.equal(calls.length, 0);
+      assert.match(logs.join("\n"), /no job "ghost-job"/);
+    } finally {
+      restore();
+      console.log = orig;
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  // Fix C: live schedule across multiple apps hangs forever — reject up front.
+  it("schedule live with --all exits 2 instead of blocking", async () => {
+    const appsRoot = mkdtempSync(join(tmpdir(), "crons-all-"));
+    const apps = join(appsRoot, "apps");
+    for (const d of ["one", "two"]) {
+      mkdirSync(join(apps, d), { recursive: true });
+      writeFileSync(join(apps, d, "void.json"), "{}");
+    }
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    try {
+      assert.equal(await run(["schedule", "--all"], apps), 2);
+      assert.match(logs.join("\n"), /one app at a time/);
+    } finally {
+      console.log = orig;
+      rmSync(appsRoot, { recursive: true, force: true });
     }
   });
 });

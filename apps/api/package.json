@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "void:deploy": "void deploy",
     "fp:emit": "void-fingerprint emit",
+    "fp:check": "void-fingerprint check --ci",
     "crons:list": "void-crons list",
     "crons:check": "void-crons check",
     "crons:emit": "void-crons emit",

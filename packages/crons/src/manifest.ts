@@ -3,17 +3,25 @@ import { basename, join } from "node:path";
 import { scanCronFiles } from "./scan.js";
 import type { CronJob, CronManifest } from "./types.js";
 
-/** Drift lines between a stored manifest and a fresh scan — active sets only, never emittedAt. */
-export function detectDrift(manifest: CronManifest, jobs: CronJob[]): string[] {
+/** Drift lines between a stored manifest and a fresh scan — active sets only, never emittedAt.
+ *  Expressions compare as sets (order-insensitive), disabled names from the stored manifest
+ *  exclude jobs on BOTH sides so panel-style disable toggles never read as drift. */
+export function detectDrift(
+  manifest: CronManifest,
+  jobs: CronJob[],
+  opts: { disabled?: string[] } = {},
+): string[] {
   const lines: string[] = [];
-  const manifestActive = manifest.jobs.filter((j) => j.status === "active");
+  const disabledNames = new Set(opts.disabled ?? manifest.disabled ?? []);
+  const manifestActive = manifest.jobs.filter((j) => j.status === "active" && !disabledNames.has(j.name));
   const diskActive = jobs.filter((j) => j.status === "active");
   const byPath = new Map(manifestActive.map((j) => [j.path, j]));
+  const key = (exprs: string[]): string => [...exprs].sort().join(", ");
   for (const j of diskActive) {
     const prev = byPath.get(j.path);
     if (!prev) lines.push(`+${j.path} added`);
-    else if (prev.expressions.join(", ") !== j.expressions.join(", ")) {
-      lines.push(`~${j.path} cron '${prev.expressions.join(", ")}' → '${j.expressions.join(", ")}'`);
+    else if (key(prev.expressions) !== key(j.expressions)) {
+      lines.push(`~${j.path} cron '${key(prev.expressions)}' → '${key(j.expressions)}'`);
     }
   }
   const diskPaths = new Set(diskActive.map((j) => j.path));

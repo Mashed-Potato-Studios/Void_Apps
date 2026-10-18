@@ -5,8 +5,10 @@ import AdminDashboard, { loader } from '../pages/index.js';
 function showFatal(error: unknown): void {
   const root = document.getElementById('root');
   if (!root) return;
-  const message = error instanceof Error ? error.message : String(error);
-  root.innerHTML = `<pre style="color:#ef4444;padding:2rem;font-family:monospace">Failed to load admin dashboard: ${message}</pre>`;
+  const pre = document.createElement('pre');
+  pre.style.cssText = 'color:#ef4444;padding:2rem;font-family:monospace';
+  pre.textContent = `Failed to load admin dashboard: ${error instanceof Error ? error.message : String(error)}`;
+  root.replaceChildren(pre);
 }
 
 async function start(): Promise<void> {

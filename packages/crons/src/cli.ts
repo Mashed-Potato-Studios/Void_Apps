@@ -3,12 +3,12 @@ import { basename, join, resolve } from "node:path";
 import { MAX_EXPRESSIONS, MAX_SCHEDULES, buildCronManifest, detectDrift, emitCronManifest, readCronManifest } from "./manifest.js";
 import { appendActivityLog, readActivityLog } from "./store.js";
 import type { CronActivityEntry } from "./types.js";
-import { collectScheduleTargets, computeDue, runScheduleOnce, startScheduleLoop } from "./schedule.js";
+import { computeDue, runScheduleOnce, startScheduleLoop } from "./schedule.js";
 import { triggerExpression, triggerJob } from "./trigger.js";
-import { scanCronFiles } from "./scan.js";
+import { isCronExpression, scanCronFiles } from "./scan.js";
 
 const USAGE = [
-  "usage: void-crons <list|check|emit|trigger> [app-path] [options]",
+  "usage: void-crons <list|check|emit|trigger|schedule> [app-path] [options]",
   "",
   "  list [app-path] [--json] [--all]          scanned jobs + manifest state",
   "  check [app-path] [--all]                  fail (1) on invalid jobs or limit overflow",
@@ -231,6 +231,11 @@ export async function run(argv: string[], cwd: string): Promise<number> {
         const job = jobs.flatMap((j) => j.expressions.map((e) => ({ job: j, expression: e }))).find(
           (x) => x.expression === selector,
         );
+        if (!job && !isCronExpression(selector)) {
+          console.log(`error: no job "${selector}" in ${basename(app)} (${basename(app)} scanned ${jobs.length} jobs) and selector is not a 5-field cron expression\nrun from the app dir, or use trigger <job> --all`);
+          code = 1;
+          continue;
+        }
         const name = job?.job.name ?? selector;
         const stub = job?.job ?? {
           path: selector,
@@ -255,18 +260,22 @@ export async function run(argv: string[], cwd: string): Promise<number> {
       return code;
     }
     case "schedule": {
-      let code = 0;
       const devToken = token ?? process.env["VOID_DEV_TRIGGER"];
+      if (apps.length > 1 && !flags.has("--once")) {
+        console.log(`error: live schedule runs one app at a time — pass an app path (batch catch-up: schedule --all --once)\n${USAGE}`);
+        return 2;
+      }
+      let code = 0;
       for (const app of apps) {
         const disabled = new Set(readDisabled(app));
         const jobs = scanCronFiles(app, { disabled: [...disabled] });
-        const targets = collectScheduleTargets(jobs, disabled);
         if (!ci) {
           for (const j of jobs.filter((x) => x.status === "invalid")) {
             console.log(`${basename(app)}: ✕ ${j.error ?? "invalid job"}`);
           }
         }
         if (flags.has("--once")) {
+          // runScheduleOnce re-scans with the same disabled set — its skipped list is authoritative.
           const runOnceResult = await runScheduleOnce(app, {
             origin,
             devToken,
@@ -278,16 +287,15 @@ export async function run(argv: string[], cwd: string): Promise<number> {
                 format: 1 as const,
                 app: basename(app),
                 fired: runOnceResult.fired,
-                skipped: [...targets.skipped, ...runOnceResult.skipped],
+                skipped: runOnceResult.skipped,
               },
               null,
               2,
             ));
           } else {
-            for (const s of targets.skipped) console.log(`${basename(app)}: skip ${s.reason}`);
             for (const e of runOnceResult.fired) console.log(`${basename(app)}: fired ${e.jobName} ${e.cron} (${e.durationMs}ms)`);
             for (const s of runOnceResult.skipped) console.log(`${basename(app)}: skip ${s.reason}`);
-            if (!ci) console.log(`${basename(app)}: caught up (${runOnceResult.fired.length} fired, ${targets.skipped.length + runOnceResult.skipped.length} skipped)`);
+            if (!ci) console.log(`${basename(app)}: caught up (${runOnceResult.fired.length} fired, ${runOnceResult.skipped.length} skipped)`);
           }
           continue;
         }

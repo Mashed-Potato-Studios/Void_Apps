@@ -24,11 +24,17 @@ export function computeDue(expressions: string[], fromMs: number, toMs: number):
     } catch {
       continue;
     }
+    // Simplified: cron-parser throws `loop limit exceeded` at next() for parseable-but-impossible
+    // expressions (e.g. '0 0 31 6,4 *'); treat the throw as window-exhausted.
     let n = 0;
     for (;;) {
       if (n++ >= MAX_ITER) break;
-      const step = parsed.next();
-      const dueMs = step.getTime();
+      let dueMs: number;
+      try {
+        dueMs = parsed.next().getTime();
+      } catch {
+        break;
+      }
       if (dueMs > toMs) break;
       out.push({ expr, dueMs });
     }
@@ -177,25 +183,39 @@ export async function startScheduleLoop(
   const stop = (): void => {
     stopped = true;
   };
-  opts.signal?.addEventListener("abort", stop);
-  if (typeof process !== "undefined" && typeof process.on === "function") {
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
+  // Only register process-global signals for CLI-style ownership; callers that pass their
+  // own signal must control process signals themselves. All listeners are removed on exit.
+  const ownsProcessHandlers = !opts.signal && typeof process !== "undefined" && typeof process.on === "function";
+  let sigint: (() => void) | undefined;
+  let sigterm: (() => void) | undefined;
+  if (ownsProcessHandlers && process.once) {
+    sigint = (): void => stop();
+    sigterm = (): void => stop();
+    process.once("SIGINT", sigint);
+    process.once("SIGTERM", sigterm);
   }
-  while (!stopped) {
-    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
-    if (stopped) break;
-    const { state: next_, fired } = await tickSchedule(state, { active, skipped: [] }, {
-      origin: opts.origin,
-      devToken: opts.devToken,
-      cronSecret: opts.cronSecret,
-      fetchImpl: opts.fetchImpl,
-      nowMs: Date.now(),
-      appendActivity: { appRoot },
-    });
-    state = next_;
-    firedTotal += fired.length;
-    for (const e of fired) console.log(`fired ${e.jobName} ${e.cron} (${e.durationMs}ms)`);
+  const relayListener = (): void => stop();
+  opts.signal?.addEventListener("abort", relayListener);
+  try {
+    while (!stopped) {
+      await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+      if (stopped) break;
+      const { state: next_, fired } = await tickSchedule(state, { active, skipped: [] }, {
+        origin: opts.origin,
+        devToken: opts.devToken,
+        cronSecret: opts.cronSecret,
+        fetchImpl: opts.fetchImpl,
+        nowMs: Date.now(),
+        appendActivity: { appRoot },
+      });
+      state = next_;
+      firedTotal += fired.length;
+      for (const e of fired) console.log(`fired ${e.jobName} ${e.cron} (${e.durationMs}ms)`);
+    }
+  } finally {
+    opts.signal?.removeEventListener("abort", relayListener);
+    if (sigint) process.removeListener("SIGINT", sigint);
+    if (sigterm) process.removeListener("SIGTERM", sigterm);
   }
   return { firedTotal };
 }

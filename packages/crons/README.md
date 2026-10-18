@@ -33,7 +33,8 @@ node packages/crons/bin/void-crons.mjs schedule apps/api
 # scheduled 1 expression · origin http://localhost:5173 · next 0 2 * * * in 3h
 # (live loop — fires each expression as its minute passes; Ctrl-C exits 0)
 
-node packages/crons/bin/void-crons.mjs trigger cleanup --origin http://localhost:5173 --token <dev-token>
+# from repo root: --all finds apps with void.json that have the job
+node packages/crons/bin/void-crons.mjs trigger cleanup --all --origin http://localhost:5173 --token <dev-token>
 # apps/api: fired cleanup 0 2 * * * (95ms)
 ```
 

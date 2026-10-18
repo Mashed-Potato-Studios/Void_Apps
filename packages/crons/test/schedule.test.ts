@@ -27,6 +27,12 @@ describe("computeDue", () => {
     const due = computeDue(["* * * * *", "* * * * *"], Date.UTC(2026, 9, 18, 10, 0, 30), Date.UTC(2026, 9, 18, 10, 1, 30));
     assert.equal(due.length, 1);
   });
+
+  it("treats impossible-but-parseable expressions as never due instead of throwing", () => {
+    // '0 0 31 6,4 *' parses (31 days in Apr/Jun impossible → parser loop throws lazily)
+    assert.doesNotThrow(() => computeDue(["0 0 31 6,4 *"], Date.UTC(2026, 0, 1), Date.UTC(2027, 0, 1)));
+    assert.deepEqual(computeDue(["0 0 31 6,4 *"], Date.UTC(2026, 0, 1), Date.UTC(2027, 0, 1)), []);
+  });
 });
 
 describe("latestDue", () => {
