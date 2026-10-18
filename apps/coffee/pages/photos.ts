@@ -51,6 +51,14 @@ const COFFEE_PHOTOS: Record<string, { image: string; notes: string }> = {
     image: img('1522992319-0365e5f11656'),
     notes: 'Black cherry, brown sugar, crema for days — house espresso.',
   },
+  'siesta-blend': {
+    image: img('1774801935455-35fb7a0fd9b5'),
+    notes: 'Cocoa, orange peel, easy finish — the afternoon-cup blend.',
+  },
+  'ethiopia-guji': {
+    image: img('1572888195250-3037a59d3578'),
+    notes: 'Floral, peach, tea-like — washed Guji highland lot.',
+  },
 };
 
 export function coffeePhoto(slug: string): { image: string; notes: string } {

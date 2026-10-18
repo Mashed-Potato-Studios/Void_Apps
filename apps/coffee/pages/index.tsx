@@ -90,7 +90,6 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
             <h2>Order {order.id} is in! ☕</h2>
             <p>Thanks — your coffee is being bagged. Show this id at the counter.</p>
             <button
-              type="button"
               className="coffee-add-btn"
               onClick={() => {
                 setOrder(null);
@@ -105,7 +104,7 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
               The menu
             </h2>
             <p className="coffee-section-sub">
-              Eight roasts · whole bean · {menu.filter((m) => m.stock > 0).length} in stock now
+              Ten roasts · whole bean · {menu.filter((m) => m.stock > 0).length} in stock now
             </p>
             <section className="coffee-menu-grid">
               {menu.map((m) => {
