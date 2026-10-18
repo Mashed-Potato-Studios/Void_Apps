@@ -3,7 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { MAX_EXPRESSIONS, MAX_SCHEDULES, buildCronManifest, detectDrift, emitCronManifest, readCronManifest } from "./manifest.js";
 import { appendActivityLog, readActivityLog } from "./store.js";
 import type { CronActivityEntry } from "./types.js";
-import { collectScheduleTargets, runScheduleOnce, startScheduleLoop } from "./schedule.js";
+import { collectScheduleTargets, computeDue, runScheduleOnce, startScheduleLoop } from "./schedule.js";
 import { triggerExpression, triggerJob } from "./trigger.js";
 import { scanCronFiles } from "./scan.js";
 
@@ -96,14 +96,21 @@ export async function run(argv: string[], cwd: string): Promise<number> {
       for (const app of apps) {
         const jobs = scanCronFiles(app, { disabled: readDisabled(app) });
         const manifest = readCronManifest(app);
+        const now = Date.now();
+        const jobsJson = jobs.map((j) => ({
+          ...j,
+          nextFireMs: j.status === "active" ? (nextFire(j.expressions, now) ?? undefined) : undefined,
+        }));
         if (json) {
-          console.log(JSON.stringify({ app: basename(app), jobs, manifest }, null, 2));
+          console.log(JSON.stringify({ app: basename(app), jobs: jobsJson, manifest }, null, 2));
         } else {
           console.log(`${basename(app)}: ${jobs.length} job(s)`);
           for (const j of jobs) {
             const expr = j.status === "invalid" ? (j.error ?? "invalid") : j.expressions.join(", ");
             const marker = j.status === "active" ? "●" : j.status === "disabled" ? "○" : "✕";
-            console.log(`  ${marker} ${j.name}  ${expr}`);
+            const due = j.status === "active" ? nextFire(j.expressions, now) : null;
+            const preview = due !== null ? fmtNext(due, now) : j.status === "active" ? "never" : j.status === "disabled" ? "—" : "";
+            console.log(`  ${marker} ${j.name}  ${expr}${preview ? `  ${preview}` : ""}`);
           }
           if (!manifest && !ci) console.log("  (no void.crons.json — run void-crons emit)");
           if (manifest) {
@@ -298,4 +305,18 @@ export async function run(argv: string[], cwd: string): Promise<number> {
 function readDisabled(app: string): string[] {
   const manifest = readCronManifest(app);
   return manifest?.disabled ?? [];
+}
+
+const PREVIEW_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
+
+function nextFire(expressions: string[], nowMs: number): number | null {
+  const due = computeDue(expressions, nowMs + 1, nowMs + PREVIEW_WINDOW_MS)[0];
+  return due ? due.dueMs : null;
+}
+
+function fmtNext(dueMs: number, nowMs: number): string {
+  const s = Math.max(60, Math.round((dueMs - nowMs) / 1000));
+  if (s < 120) return "next in <2m";
+  if (s < 5400) return `next in ${Math.round(s / 60)}m`;
+  return `next in ${Math.round(s / 3600)}h`;
 }

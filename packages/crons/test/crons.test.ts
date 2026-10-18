@@ -342,3 +342,33 @@ describe("void-crons CLI schedule", () => {
     }
   });
 });
+
+describe("void-crons list preview", () => {
+  // pinned Review Focus input 4: yearly expr inside 8d window → never, no crash
+  it("shows next-fire column; yearly jobs read never; json carries nextFireMs", async () => {
+    const app = makeApp({
+      "hourly.ts": HEARTBEAT,
+      "yearly.ts": `export const cron = '0 0 1 1 *';\nexport default async () => {};\n`,
+    });
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    try {
+      assert.equal(await run(["list", app, "--json"], process.cwd()), 0);
+      const out = JSON.parse(logs.filter((l) => l.startsWith("{")).join(""));
+      const jobs = out.jobs as { name: string; nextFireMs?: number }[];
+      assert.ok(jobs.find((j) => j.name === "hourly")?.nextFireMs, "hourly has a next fire");
+      assert.ok(!("nextFireMs" in (jobs.find((j) => j.name === "yearly") ?? {})));
+      logs.length = 0;
+      assert.equal(await run(["list", app], process.cwd()), 0);
+      const text = logs.join("\n");
+      assert.match(text, /next in \d+[mh]/);
+      assert.match(text, /yearly\s+0 0 1 1 \*\s+never/);
+    } finally {
+      console.log = orig;
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
