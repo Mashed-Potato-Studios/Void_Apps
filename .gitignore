@@ -6,6 +6,7 @@ node_modules/
 .void/
 dist/
 .output/
+void.crons.activity.json
 
 # Turborepo
 .turbo/
