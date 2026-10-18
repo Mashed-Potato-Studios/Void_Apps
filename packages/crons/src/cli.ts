@@ -102,7 +102,7 @@ export async function run(argv: string[], cwd: string): Promise<number> {
           nextFireMs: j.status === "active" ? (nextFire(j.expressions, now) ?? undefined) : undefined,
         }));
         if (json) {
-          console.log(JSON.stringify({ app: basename(app), jobs: jobsJson, manifest }, null, 2));
+          console.log(JSON.stringify({ app: basename(app), format: 1, jobs: jobsJson, manifest }, null, 2));
         } else {
           console.log(`${basename(app)}: ${jobs.length} job(s)`);
           for (const j of jobs) {
@@ -217,7 +217,7 @@ export async function run(argv: string[], cwd: string): Promise<number> {
               devToken,
             });
             if (res.entry) fired.push(res.entry);
-            if (json) console.log(JSON.stringify({ app: basename(app), ...res }));
+            if (json) console.log(JSON.stringify({ app: basename(app), format: 1, ...res }));
             else if (res.ok) console.log(`${basename(app)}: fired ${byName.name} ${expression} (${res.entry?.durationMs}ms)`);
             else {
               code = 1;
@@ -243,7 +243,7 @@ export async function run(argv: string[], cwd: string): Promise<number> {
         const results = await triggerJob({ ...stub, expressions: [selector] }, { origin, devToken });
         const fired: CronActivityEntry[] = results.flatMap((r) => (r.entry ? [r.entry] : []));
         for (const res of results) {
-          if (json) console.log(JSON.stringify({ app: basename(app), ...res }));
+          if (json) console.log(JSON.stringify({ app: basename(app), format: 1, ...res }));
           else if (res.ok) console.log(`${basename(app)}: fired ${name} ${selector}`);
           else {
             code = 1;

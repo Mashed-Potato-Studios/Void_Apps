@@ -343,6 +343,31 @@ describe("void-crons CLI schedule", () => {
   });
 });
 
+describe("void-crons json contract", () => {
+  it("list/trigger --json carry format: 1", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    try {
+      await run(["list", app, "--json"], process.cwd());
+      assert.equal(JSON.parse(logs.find((l) => l.startsWith("{")) ?? "{}").format, 1);
+      logs.length = 0;
+      const origFetch = globalThis.fetch;
+      const fake = async (): Promise<{ ok: boolean; status: number }> => ({ ok: true, status: 200 });
+      globalThis.fetch = fake as unknown as typeof fetch;
+      await run(["trigger", "0 * * * *", app, "--json"], process.cwd());
+      globalThis.fetch = origFetch;
+      assert.equal(JSON.parse(logs.find((l) => l.startsWith("{")) ?? "{}").format, 1);
+    } finally {
+      console.log = orig;
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("void-crons list preview", () => {
   // pinned Review Focus input 4: yearly expr inside 8d window → never, no crash
   it("shows next-fire column; yearly jobs read never; json carries nextFireMs", async () => {

@@ -31,7 +31,22 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test --test-concurrency=1 --import ./test/hooks/register.mjs \"test/**/*.test.ts\""
+    "test": "node --test --test-concurrency=1 --import ./test/hooks/register.mjs \"test/**/*.test.ts\"",
+    "prepublishOnly": "pnpm build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": "./dist/index.js",
+      "./ui": "./dist/ui/CronPanel.js",
+      "./scan": "./dist/scan.js",
+      "./manifest": "./dist/manifest.js",
+      "./schedule": "./dist/schedule.js",
+      "./cli": "./dist/cli.js",
+      "./package.json": "./package.json"
+    }
   },
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
