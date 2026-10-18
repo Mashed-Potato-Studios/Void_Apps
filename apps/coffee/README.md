@@ -3,7 +3,7 @@
 Coffee-lovers storefront + admin dashboard — the first app in this repo on the
 real Void SDK (`void@^1.1.11`, real `voidPlugin()`), built via the Void
 Quickstart path (React + D1 + Cloudflare). Exercises the whole toolchain:
-typed fetch, D1 + Drizzle, two cron jobs, CronPanel admin page, `void-crons`
+typed fetch, D1 + Drizzle, four cron jobs, schedule admin page, `void-crons`
 and `void-fingerprint` CLIs.
 
 ## Run locally
@@ -14,11 +14,11 @@ pnpm --filter @void-monorepo/coffee dev   # http://localhost:5173
 
 | Route | What it shows | Backed by |
 |---|---|---|
-| `/` | Storefront hero + 8-coffee menu grid, cart + mock checkout | `GET /api/menu` (seed), `POST /api/orders` |
+| `/` | Storefront hero + 10-coffee menu grid, cart + mock checkout | `GET /api/menu` (seed), `POST /api/orders` |
 | `/dashboard` | Today's Favorite, revenue, low-stock alerts, recent orders | `GET /api/orders` aggregate |
-| `/admin/crons` | CronPanel: 2 jobs, expression/schedule counts, activity | `void.crons.json` + `void-crons` store |
+| `/admin/crons` | Roastery schedule: 4 jobs, expression/schedule counts, activity | `void.crons.json` + `void-crons` store |
 | `GET /api/health` | Liveness `{ status, app, timestamp }` | — |
-| `GET /api/menu` | 8 coffees `{ success, data }` | `db/seed.ts` |
+| `GET /api/menu` | 10 coffees `{ success, data }` | `db/seed.ts` |
 | `GET /api/orders` | `{ orders, revenueCents, lowStock }` | live D1 w/ seed fallback |
 | `POST /api/orders` | Creates order + items, returns `{ id, totalCents }` | live D1 |
 
@@ -28,11 +28,15 @@ pnpm --filter @void-monorepo/coffee dev   # http://localhost:5173
   item up to `default_stock`. Never exceeds default, never touches orders.
 - `15 * * * *` **top-coffee** (`crons/top-coffee.ts`) — group-by over
   `order_items`, rewrites the 1-row `coffee_stats.current` ("Today's Favorite").
+- `30 7 * * *` **stock-alert** (`crons/stock-alert.ts`) — morning low-stock
+  digest, logs every active item under 5 units before opening.
+- `0 18 * * 5` **sales-digest** (`crons/sales-digest.ts`) — Friday 18:00
+  week-in-review, counts orders and sums revenue.
 
 Observe locally:
 
 ```bash
-pnpm --filter @void-monorepo/coffee crons:list      # 2 jobs + next-fire
+pnpm --filter @void-monorepo/coffee crons:list      # 4 jobs + next-fire
 pnpm --filter @void-monorepo/coffee crons:check     # manifest drift gate
 pnpm --filter @void-monorepo/coffee crons:schedule  # live loop vs dev origin (Ctrl-C exits 0)
 ```
@@ -57,7 +61,7 @@ curl -X POST http://localhost:5173/__void/scheduled \
 ## Verification checklist
 
 - [ ] `pnpm dev` boots with real `voidPlugin()` (no `void-missing`, no shim)
-- [ ] Storefront renders 8 menu items via `GET /api/menu`
+- [ ] Storefront renders 10 menu items via `GET /api/menu`
 - [ ] Checkout: `POST /api/orders` 200 → confirmation shows order id → dashboard reflects it
 - [ ] `void-crons list/check/emit` clean against `apps/coffee`; admin/crons renders
 - [ ] `void deploy` succeeds; deployed URL serves storefront + dashboard

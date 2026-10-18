@@ -1,13 +1,33 @@
 {
   "format": 1,
   "app": "coffee",
-  "emittedAt": "2026-10-18T16:48:21.252Z",
+  "emittedAt": "2026-10-18T17:20:22.225Z",
   "jobs": [
     {
       "path": "crons/rollover.ts",
       "name": "rollover",
       "expressions": [
         "0 3 * * *"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    },
+    {
+      "path": "crons/sales-digest.ts",
+      "name": "sales-digest",
+      "expressions": [
+        "0 18 * * 5"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    },
+    {
+      "path": "crons/stock-alert.ts",
+      "name": "stock-alert",
+      "expressions": [
+        "30 7 * * *"
       ],
       "status": "active",
       "usesDefineScheduled": true,
@@ -24,8 +44,8 @@
       "sharedExpression": false
     }
   ],
-  "expressionCount": 2,
-  "scheduleCount": 2,
+  "expressionCount": 4,
+  "scheduleCount": 4,
   "disabled": [],
   "invalid": []
 }

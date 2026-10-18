@@ -17,9 +17,25 @@ export const coffeeJobs: CronJob[] = [
     usesDefineScheduled: true,
     sharedExpression: false,
   },
+  {
+    path: 'crons/stock-alert.ts',
+    name: 'coffee-stock-alert',
+    expressions: ['30 7 * * *'],
+    status: 'active',
+    usesDefineScheduled: true,
+    sharedExpression: false,
+  },
+  {
+    path: 'crons/sales-digest.ts',
+    name: 'coffee-sales-digest',
+    expressions: ['0 18 * * 5'],
+    status: 'active',
+    usesDefineScheduled: true,
+    sharedExpression: false,
+  },
 ];
 
-export const COFFEE_MANIFEST = { expressionCount: 2, scheduleCount: 2 };
+export const COFFEE_MANIFEST = { expressionCount: 4, scheduleCount: 4 };
 
 // return shape must align with the client page props exactly
 export type CronsLoader = {

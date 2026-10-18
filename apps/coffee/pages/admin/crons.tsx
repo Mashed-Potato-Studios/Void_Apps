@@ -8,11 +8,15 @@ export const head = () => ({ title: 'Cron Jobs' });
 const JOB_BLURBS: Record<string, string> = {
   'coffee-nightly-restock': 'Restocks every active menu item up to its default level. Never exceeds default, never touches orders.',
   'coffee-top-coffee': 'Group-by over order_items — rewrites the 1-row coffee_stats.current behind “Today’s Favorite”.',
+  'coffee-stock-alert': 'Morning low-stock digest — logs every active item under 5 units so the crew pulls from the roastery before opening.',
+  'coffee-sales-digest': 'Friday 18:00 week-in-review — counts orders and sums revenue for the week.',
 };
 
 function nextFire(cron: string): string {
   // Friendly static hint; precise countdowns come from `void-crons list`.
   if (cron.startsWith('0 3')) return 'Tonight at 03:00';
+  if (cron.startsWith('30 7')) return 'Tomorrow at 07:30';
+  if (cron.includes('18') && cron.endsWith('5')) return 'Friday at 18:00';
   return 'Every hour at :15';
 }
 
@@ -40,7 +44,7 @@ export default function CoffeeCronsPage({
         </h2>
         <p className="coffee-section-sub">
           {jobs.length} jobs · {expressionCount}/100 expressions · {scheduleCount}/1000 schedules —
-          the two background jobs that keep the shelves full and the favorite fresh.
+          the background jobs that keep the shelves full, the favorite fresh, and the crew informed.
         </p>
         <section style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           {jobs.map((job) => {
