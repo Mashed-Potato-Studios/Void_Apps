@@ -3,6 +3,7 @@ import { basename, join, resolve } from "node:path";
 import { MAX_EXPRESSIONS, MAX_SCHEDULES, buildCronManifest, emitCronManifest, readCronManifest } from "./manifest.js";
 import { appendActivityLog, readActivityLog } from "./store.js";
 import type { CronActivityEntry } from "./types.js";
+import { collectScheduleTargets, runScheduleOnce, startScheduleLoop } from "./schedule.js";
 import { triggerExpression, triggerJob } from "./trigger.js";
 import { scanCronFiles } from "./scan.js";
 
@@ -13,6 +14,7 @@ const USAGE = [
   "  check [app-path] [--all]                  fail (1) on invalid jobs or limit overflow",
   "  emit [app-path]                           write void.crons.json",
   "  trigger <job|expression> [--origin URL] [--cron EXPR] [--token T] [--all]",
+  "  schedule [app-path] [--once] [--token T]  catch-up (--once) or live auto-fire loop",
   "",
   "  --origin URL   dev server origin (default http://localhost:5173)",
   "  --cron EXPR    expression to fire when triggering by job name",
@@ -229,6 +231,47 @@ export async function run(argv: string[], cwd: string): Promise<number> {
           }
         }
         appendActivityLog(app, fired);
+      }
+      return code;
+    }
+    case "schedule": {
+      let code = 0;
+      const devToken = token ?? process.env["VOID_DEV_TRIGGER"];
+      for (const app of apps) {
+        const disabled = new Set(readDisabled(app));
+        const jobs = scanCronFiles(app, { disabled: [...disabled] });
+        const targets = collectScheduleTargets(jobs, disabled);
+        if (!ci) {
+          for (const j of jobs.filter((x) => x.status === "invalid")) {
+            console.log(`${basename(app)}: ✕ ${j.error ?? "invalid job"}`);
+          }
+        }
+        if (flags.has("--once")) {
+          const runOnceResult = await runScheduleOnce(app, {
+            origin,
+            devToken,
+            disabled: [...disabled],
+          });
+          if (json) {
+            console.log(JSON.stringify(
+              {
+                format: 1 as const,
+                app: basename(app),
+                fired: runOnceResult.fired,
+                skipped: [...targets.skipped, ...runOnceResult.skipped],
+              },
+              null,
+              2,
+            ));
+          } else {
+            for (const s of targets.skipped) console.log(`${basename(app)}: skip ${s.reason}`);
+            for (const e of runOnceResult.fired) console.log(`${basename(app)}: fired ${e.jobName} ${e.cron} (${e.durationMs}ms)`);
+            for (const s of runOnceResult.skipped) console.log(`${basename(app)}: skip ${s.reason}`);
+            if (!ci) console.log(`${basename(app)}: caught up (${runOnceResult.fired.length} fired, ${targets.skipped.length + runOnceResult.skipped.length} skipped)`);
+          }
+          continue;
+        }
+        await startScheduleLoop(app, { origin, devToken, disabled: [...disabled] });
       }
       return code;
     }

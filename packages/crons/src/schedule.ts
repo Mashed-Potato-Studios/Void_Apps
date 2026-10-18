@@ -154,4 +154,56 @@ export async function tickSchedule(
   return { state: { checkpointMs: opts.nowMs, firedMinutes: state.firedMinutes }, fired, skipped };
 }
 
+const TICK_MS = 30_000;
+
+/** Live loop: fixed 30s ticks, fires each distinct expression at most once per matched minute. */
+export async function startScheduleLoop(
+  appRoot: string,
+  opts: ScheduleOptions & { intervalMs?: number; signal?: AbortSignal },
+): Promise<{ firedTotal: number }> {
+  const intervalMs = opts.intervalMs ?? TICK_MS;
+  const disabledNames = new Set(opts.disabled ?? []);
+  const { active } = collectScheduleTargets(scanCronFiles(appRoot), disabledNames);
+  let state = initScheduleState(opts.nowMs ?? Date.now());
+  const SOON = 8 * 24 * 60 * 60 * 1000;
+  const next = latestDue([...active.keys()], state.checkpointMs, state.checkpointMs + SOON)
+    .sort((a, b) => a.dueMs - b.dueMs)[0];
+  const relay = next ? ` · next ${next.expr} in ${fmtRel(next.dueMs - state.checkpointMs)}` : "";
+  console.log(
+    `scheduled ${active.size} ${active.size === 1 ? "expression" : "expressions"} · origin ${opts.origin}${relay}`,
+  );
+  let firedTotal = 0;
+  let stopped = false;
+  const stop = (): void => {
+    stopped = true;
+  };
+  opts.signal?.addEventListener("abort", stop);
+  if (typeof process !== "undefined" && typeof process.on === "function") {
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  }
+  while (!stopped) {
+    await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
+    if (stopped) break;
+    const { state: next_, fired } = await tickSchedule(state, { active, skipped: [] }, {
+      origin: opts.origin,
+      devToken: opts.devToken,
+      cronSecret: opts.cronSecret,
+      fetchImpl: opts.fetchImpl,
+      nowMs: Date.now(),
+      appendActivity: { appRoot },
+    });
+    state = next_;
+    firedTotal += fired.length;
+    for (const e of fired) console.log(`fired ${e.jobName} ${e.cron} (${e.durationMs}ms)`);
+  }
+  return { firedTotal };
+}
+
+function fmtRel(msDelta: number): string {
+  const s = Math.max(60, Math.round(msDelta / 1000));
+  if (s < 5400) return `${Math.round(s / 60)}m`;
+  return `${Math.round(s / 3600)}h`;
+}
+
 export type { CronJob };

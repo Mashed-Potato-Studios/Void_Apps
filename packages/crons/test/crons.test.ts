@@ -240,18 +240,18 @@ describe("void-crons CLI", () => {
   });
 });
 
-describe("void-crons CLI trigger", () => {
-  function stubFetch(calls: { url: string; init?: RequestInit }[]): () => void {
-    const orig = globalThis.fetch;
-    globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
-      calls.push({ url: String(url), init });
-      return { ok: true, status: 200 };
-    }) as unknown as typeof fetch;
-    return () => {
-      globalThis.fetch = orig;
-    };
-  }
+function stubFetch(calls: { url: string; init?: RequestInit }[]): () => void {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    calls.push({ url: String(url), init });
+    return { ok: true, status: 200 };
+  }) as unknown as typeof fetch;
+  return () => {
+    globalThis.fetch = orig;
+  };
+}
 
+describe("void-crons CLI trigger", () => {
   it("fires a job by name and persists entries to the activity log", async () => {
     const app = makeApp({ "heartbeat.ts": HEARTBEAT });
     const calls: { url: string; init?: RequestInit }[] = [];
@@ -284,6 +284,36 @@ describe("void-crons CLI trigger", () => {
       assert.equal(log[0]?.status, "success");
     } finally {
       restore();
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("void-crons CLI schedule", () => {
+  it("schedule --once fires due expressions, persists activity, and reports skipped jobs (json)", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT, "cleanup.ts": CLEANUP });
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const restore = stubFetch(calls);
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    try {
+      // HEARTBEAT '0 * * * *' + CLEANUP '0 * * * *', '30 * * * *' → 2 distinct expressions, both due in trailing 24h.
+      assert.equal(await run(["schedule", "--once", app, "--json"], process.cwd()), 0);
+      const jsonLine = logs.find((l) => l !== undefined && l.startsWith("{"));
+      const out = JSON.parse(jsonLine ?? "{}");
+      assert.equal(out.format, 1);
+      assert.equal(typeof out.app, "string");
+      assert.ok(out.app.length > 0);
+      assert.equal(calls.length, 2);
+      assert.equal(out.fired.length, 2);
+      const log = readActivityLog(app);
+      assert.equal(log.length, 2);
+    } finally {
+      restore();
+      console.log = orig;
       rmSync(app, { recursive: true, force: true });
     }
   });
