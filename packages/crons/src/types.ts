@@ -1,5 +1,5 @@
 /**
- * @void-monorepo/crons — shared types for the cron inspector.
+ * void-crons — shared types for the cron inspector.
  *
  * Mirrors Void's `crons/` contract: each job file must export
  * `export const cron = "<expression>"` (or an array of expressions)
@@ -54,14 +54,6 @@ export interface CronActivityEntry {
   source: "local" | "remote";
 }
 
-export interface CronTriggerResult {
-  ok: boolean;
-  skipped?: boolean;
-  reason?: string;
-  entry?: CronActivityEntry;
-  httpStatus?: number;
-}
-
 export interface CronTriggerOptions {
   /** Dev server origin, e.g. `http://localhost:5173`. */
   origin: string;
@@ -71,4 +63,24 @@ export interface CronTriggerOptions {
   cronSecret?: string;
   scheduledTime?: number;
   fetchImpl?: typeof fetch;
+  /** Per-attempt timeout in ms (default 10_000). */
+  timeoutMs?: number;
+  /** Total attempts including the first (default 1; `trigger` CLI passes `--retries + 1`). */
+  maxAttempts?: number;
+  /** Base backoff between attempts in ms (default 500, doubled each retry). */
+  retryBaseMs?: number;
+  /** Override the sleep between retries (tests). */
+  sleepImpl?: (ms: number) => Promise<void>;
+}
+
+export interface CronTriggerResult {
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+  entry?: CronActivityEntry;
+  httpStatus?: number;
+  /** 1-based count of HTTP attempts made. */
+  attempts: number;
+  /** True when the final outcome followed at least one retry. */
+  retried: boolean;
 }

@@ -1,7 +1,6 @@
 {
-  "name": "@void-monorepo/crons",
-  "version": "0.1.0",
-  "private": true,
+  "name": "void-crons",
+  "version": "0.1.1",
   "description": "Cron job scanner, manifest, local trigger, activity store, and dev panel for Void Cloud crons/",
   "license": "MIT",
   "type": "module",

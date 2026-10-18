@@ -16,7 +16,7 @@
   "dependencies": {
     "@void-monorepo/api-client": "workspace:*",
     "@void-monorepo/auth": "workspace:*",
-    "@void-monorepo/crons": "workspace:*",
+    "void-crons": "workspace:*",
     "@void-monorepo/db": "workspace:*",
     "@void-monorepo/types": "workspace:*",
     "@void-monorepo/ui": "workspace:*",

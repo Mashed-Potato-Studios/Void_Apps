@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scanCronFiles } from "../src/scan.ts";
@@ -8,6 +8,7 @@ import { buildCronManifest, emitCronManifest, readCronManifest, detectDrift } fr
 import { createCronStore, readActivityLog, appendActivityLog } from "../src/store.ts";
 import { triggerExpression, triggerJob } from "../src/trigger.ts";
 import { run } from "../src/cli.ts";
+import type { CronActivityEntry } from "../src/types.ts";
 
 function makeApp(files: Record<string, string>): string {
   const dir = mkdtempSync(join(tmpdir(), "crons-"));
@@ -73,6 +74,73 @@ describe("scanCronFiles", () => {
       rmSync(app, { recursive: true, force: true });
     }
   });
+
+  it("ignores commented-out cron exports when scanning", () => {
+    const app = makeApp({
+      "commented.ts": `// export const cron = '0 * * * *';\nexport default async () => {};\n`,
+      "blocked.ts": `/*\nexport const cron = '0 * * * *';\n*/\nexport default async () => {};\n`,
+      "real.ts": `export const cron = '5 * * * *'; // trailing comment\nexport default async () => {};\n`,
+      "url.ts": `export const cron = '5 * * * *';\nconst u = "http://example.com/x";\nexport default async () => {};\n`,
+    });
+    try {
+      const jobs = scanCronFiles(app);
+      const byName = Object.fromEntries(jobs.map((j) => [j.name, j]));
+      assert.equal(byName["commented"]?.status, "invalid");
+      assert.match(byName["commented"]?.error ?? "", /missing `export const cron`/);
+      assert.equal(byName["blocked"]?.status, "invalid");
+      assert.match(byName["blocked"]?.error ?? "", /missing `export const cron`/);
+      assert.deepEqual(byName["real"]?.expressions, ["5 * * * *"]);
+      assert.deepEqual(byName["url"]?.expressions, ["5 * * * *"]);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects out-of-range expressions and accepts DOW names, with parser detail", () => {
+    const app = makeApp({
+      "range.ts": `export const cron = '99 99 99 99 99';\nexport default async () => {};\n`,
+      "month.ts": `export const cron = '0 0 1 13 *';\nexport default async () => {};\n`,
+      "dow.ts": `export const cron = '0 9 * * MON';\nexport default async () => {};\n`,
+    });
+    try {
+      const jobs = scanCronFiles(app);
+      const byName = Object.fromEntries(jobs.map((j) => [j.name, j]));
+      assert.equal(byName["range"]?.status, "invalid");
+      assert.match(byName["range"]?.error ?? "", /invalid cron expression/);
+      assert.match(byName["range"]?.error ?? "", /99/);
+      assert.equal(byName["month"]?.status, "invalid");
+      assert.match(byName["month"]?.error ?? "", /invalid cron expression/);
+      assert.deepEqual(byName["dow"]?.expressions, ["0 9 * * MON"]);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it("detects defineScheduled calls without flagging imports or lookalikes", () => {
+    const app = makeApp({
+      "wrapped.ts": `import { defineScheduled } from 'void';\nexport const cron = '0 * * * *';\nexport default defineScheduled(async () => {});\n`,
+      "aliased.ts": `import { defineScheduled as ds } from 'void';\nexport const cron = '1 * * * *';\nexport default ds(async () => {});\n`,
+      "namespaced.ts": `import * as voidNs from 'void';\nexport const cron = '2 * * * *';\nexport default voidNs.defineScheduled(async () => {});\n`,
+      "bare.ts": `import { defineScheduled } from 'void';\nexport const cron = '5 * * * *';\nexport default async () => {};\n`,
+      "prop.ts": `export const cron = '6 * * * *';\nconst x = { defineScheduled() {} };\nexport default async () => {};\n`,
+      "longer.ts": `export const cron = '7 * * * *';\nconst mydefineScheduled = 1;\nexport default async () => {};\n`,
+      "member.ts": `export const cron = '8 * * * *';\nfoo.defineScheduled(async () => {});\nexport default async () => {};\n`,
+    });
+    try {
+      const jobs = scanCronFiles(app);
+      const byName = Object.fromEntries(jobs.map((j) => [j.name, j]));
+      assert.equal(byName["wrapped"]?.usesDefineScheduled, true);
+      assert.equal(byName["aliased"]?.usesDefineScheduled, true);
+      assert.equal(byName["namespaced"]?.usesDefineScheduled, true);
+      assert.equal(byName["bare"]?.usesDefineScheduled, false);
+      assert.equal(byName["prop"]?.usesDefineScheduled, false);
+      assert.equal(byName["longer"]?.usesDefineScheduled, false);
+      assert.equal(byName["member"]?.usesDefineScheduled, false);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
 });
 
 describe("manifest", () => {
@@ -150,6 +218,63 @@ describe("trigger", () => {
     assert.equal(res.entry?.error, "HTTP 401");
   });
 
+  it("retries 503 then succeeds, and never retries 401", async () => {
+    let calls = 0;
+    const flaky = (async () => {
+      calls++;
+      return calls === 1 ? { ok: false, status: 503 } : { ok: true, status: 200 };
+    }) as unknown as typeof fetch;
+    const sleeps: number[] = [];
+    const retried = await triggerExpression("0 * * * *", "heartbeat", {
+      origin: "http://localhost:5173",
+      fetchImpl: flaky,
+      maxAttempts: 3,
+      sleepImpl: (ms: number) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+    assert.equal(retried.ok, true);
+    assert.equal(retried.attempts, 2);
+    assert.equal(retried.retried, true);
+    assert.deepEqual(sleeps, [500]);
+    assert.equal(calls, 2);
+
+    let authed = 0;
+    const denied = (async () => {
+      authed++;
+      return { ok: false, status: 401 };
+    }) as unknown as typeof fetch;
+    const final = await triggerExpression("0 * * * *", "heartbeat", {
+      origin: "http://localhost:5173",
+      fetchImpl: denied,
+      maxAttempts: 3,
+      sleepImpl: () => Promise.resolve(),
+    });
+    assert.equal(final.ok, false);
+    assert.equal(final.attempts, 1);
+    assert.equal(final.retried, false);
+    assert.equal(authed, 1);
+  });
+
+  it("times out a hanging server and reports attempts", async () => {
+    const hanging = ((_url: unknown, init?: { signal?: AbortSignal }) => {
+      const { promise, reject } = Promise.withResolvers<never>();
+      init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+      return promise;
+    }) as unknown as typeof fetch;
+    const res = await triggerExpression("0 * * * *", "heartbeat", {
+      origin: "http://localhost:5173",
+      fetchImpl: hanging,
+      timeoutMs: 20,
+      maxAttempts: 2,
+      sleepImpl: () => Promise.resolve(),
+    });
+    assert.equal(res.ok, false);
+    assert.equal(res.attempts, 2);
+    assert.equal(res.retried, true);
+    assert.match(res.entry?.error ?? "", /abort/);
+  });
   it("does not send the internal secret header when CRON_SECRET is set but origin is local", async () => {
     const seen: Record<string, string>[] = [];
     const fetchImpl = (async (_url: unknown, init: { headers: Record<string, string> }) => {
@@ -196,23 +321,47 @@ describe("store", () => {
     assert.equal(store.isDisabled("heartbeat"), false);
   });
 
-  it("persists the activity log capped for CLI/panel sharing", () => {
-    const app = mkdtempSync(join(tmpdir(), "crons-log-"));
+  it("sqlite store is default: concurrent appends persist newest-first", async () => {
+    const app = mkdtempSync(join(tmpdir(), "crons-sqlite-"));
     try {
-      appendActivityLog(app, [
-        {
-          id: "a",
-          jobName: "heartbeat",
-          cron: "0 * * * *",
-          scheduledTime: new Date(0).toISOString(),
-          finishedAt: new Date(1).toISOString(),
-          durationMs: 5,
-          status: "success",
-          source: "local",
-        },
-      ]);
-      assert.equal(readActivityLog(app).length, 1);
-      assert.equal(readActivityLog(join(tmpdir(), "crons-missing-xyz")).length, 0);
+      const mk = (id: string): CronActivityEntry => ({
+        id,
+        jobName: "heartbeat",
+        cron: "0 * * * *",
+        scheduledTime: new Date(0).toISOString(),
+        finishedAt: new Date(1).toISOString(),
+        durationMs: 5,
+        status: "success",
+        source: "local",
+      });
+      await Promise.all([0, 1, 2].map((n) => appendActivityLog(app, [mk(`n${n}`)])));
+      const ids = readActivityLog(app, 100).map((e) => e.id).sort();
+      assert.deepEqual(ids, ["n0", "n1", "n2"].sort());
+      assert.ok(existsSync(join(app, "void.crons.activity.sqlite")));
+      assert.ok(!existsSync(join(app, "void.crons.activity.jsonl")));
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it("jsonl store still works when selected, with legacy fallback", async () => {
+    const app = mkdtempSync(join(tmpdir(), "crons-log2-"));
+    try {
+      const mk = (id: string): CronActivityEntry => ({
+        id,
+        jobName: "heartbeat",
+        cron: "0 * * * *",
+        scheduledTime: new Date(0).toISOString(),
+        finishedAt: new Date(1).toISOString(),
+        durationMs: 5,
+        status: "success",
+        source: "local",
+      });
+      writeFileSync(join(app, "void.crons.activity.json"), JSON.stringify([mk("old")]));
+      assert.equal(readActivityLog(app, 100, "jsonl").map((e) => e.id).join(","), "old");
+      await Promise.all([0, 1, 2].map((n) => appendActivityLog(app, [mk(`n${n}`)], "jsonl")));
+      const ids = readActivityLog(app, 100, "jsonl").map((e) => e.id).sort();
+      assert.deepEqual(ids, ["n0", "n1", "n2"].sort());
     } finally {
       rmSync(app, { recursive: true, force: true });
     }
@@ -284,6 +433,46 @@ describe("void-crons CLI trigger", () => {
       assert.equal(log[0]?.status, "success");
     } finally {
       restore();
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it("trigger accepts an app path after the selector", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const restore = stubFetch(calls);
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    try {
+      assert.equal(await run(["trigger", "heartbeat", app], join(app, "..")), 0);
+      assert.equal(calls.length, 1);
+      assert.match(logs.join("\n"), /fired heartbeat 0 \* \* \* \*/);
+    } finally {
+      restore();
+      console.log = orig;
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it("schedule rejects an unknown --tz without firing", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const restore = stubFetch(calls);
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (s?: string): void => {
+      logs.push(String(s));
+    };
+    try {
+      assert.equal(await run(["schedule", "--once", app, "--tz", "Foo/Bar"], process.cwd()), 2);
+      assert.equal(calls.length, 0);
+      assert.match(logs.join("\n"), /unknown timezone/);
+    } finally {
+      restore();
+      console.log = orig;
       rmSync(app, { recursive: true, force: true });
     }
   });

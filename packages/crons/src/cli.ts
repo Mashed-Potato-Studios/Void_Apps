@@ -1,24 +1,28 @@
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { MAX_EXPRESSIONS, MAX_SCHEDULES, buildCronManifest, detectDrift, emitCronManifest, readCronManifest } from "./manifest.js";
-import { appendActivityLog, readActivityLog } from "./store.js";
+import { appendActivityLog, readActivityLog, type ActivityStoreMode } from "./store.js";
 import type { CronActivityEntry } from "./types.js";
-import { computeDue, runScheduleOnce, startScheduleLoop } from "./schedule.js";
+import { computeDue, isValidTimezone, runScheduleOnce, startScheduleLoop } from "./schedule.js";
 import { triggerExpression, triggerJob } from "./trigger.js";
 import { isCronExpression, scanCronFiles } from "./scan.js";
 
 const USAGE = [
   "usage: void-crons <list|check|emit|trigger|schedule> [app-path] [options]",
   "",
-  "  list [app-path] [--json] [--all]          scanned jobs + manifest state",
-  "  check [app-path] [--all]                  fail (1) on invalid jobs or limit overflow",
-  "  emit [app-path]                           write void.crons.json",
-  "  trigger <job|expression> [--origin URL] [--cron EXPR] [--token T] [--all]",
-  "  schedule [app-path] [--once] [--token T]  catch-up (--once) or live auto-fire loop",
+  "  list [app-path] [--json] [--all] [--tz ZONE]  scanned jobs + manifest state",
+  "  check [app-path] [--all]                      fail (1) on invalid jobs or limit overflow",
+  "  emit [app-path]                               write void.crons.json",
+  "  trigger <job|expr> [app-path] [--origin URL] [--cron EXPR] [--token T] [--retries N] [--timeout MS] [--all]",
+  "  schedule [app-path] [--once] [--token T] [--tz ZONE] [--retries N] [--timeout MS] [--store sqlite|jsonl]  catch-up (--once) or live auto-fire loop",
   "",
   "  --origin URL   dev server origin (default http://localhost:5173)",
   "  --cron EXPR    expression to fire when triggering by job name",
   "  --token T      x-void-dev-trigger value (else --dev-token is omitted)",
+  "  --tz ZONE      IANA timezone for schedule + previews (default server-local)",
+  "  --retries N    retry attempts on 429/5xx/network (default 0); backoff 500ms doubling",
+  "  --timeout MS   per-attempt HTTP timeout (default 10000)",
+  "  --store MODE   activity store: sqlite (WAL, default) or jsonl (legacy file)",
   "  --json         machine-readable output",
   "  --all          run across apps/* (needs void.json)",
   "  --ci           quiet on success",
@@ -54,6 +58,10 @@ export async function run(argv: string[], cwd: string): Promise<number> {
   let origin = "http://localhost:5173";
   let cronOverride: string | undefined;
   let token: string | undefined;
+  let tz: string | undefined;
+  let retries = 0;
+  let timeoutMs = 10_000;
+  let store: string | undefined;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === undefined) continue;
@@ -66,6 +74,18 @@ export async function run(argv: string[], cwd: string): Promise<number> {
     } else if (a === "--token") {
       token = args[i + 1];
       i++;
+    } else if (a === "--tz") {
+      tz = args[i + 1];
+      i++;
+    } else if (a === "--retries") {
+      retries = Math.max(0, Number.parseInt(args[i + 1] ?? "0", 10) || 0);
+      i++;
+    } else if (a === "--timeout") {
+      timeoutMs = Math.max(1, Number.parseInt(args[i + 1] ?? "10000", 10) || 10_000);
+      i++;
+    } else if (a === "--store") {
+      store = args[i + 1];
+      i++;
     } else if (a.startsWith("--")) {
       flags.add(a);
     } else {
@@ -77,19 +97,30 @@ export async function run(argv: string[], cwd: string): Promise<number> {
     return 2;
   }
   const cmd = positionals[0] ?? "list";
-  const target = positionals[1];
+  // trigger takes the job selector first, then an optional app path:
+  // `trigger <job|expr> [app-path]`. All other commands take `[app-path]` first.
+  const target = cmd === "trigger" ? positionals[2] : positionals[1];
+  const triggerSelector = cmd === "trigger" ? positionals[1] : undefined;
   const all = flags.has("--all");
   const json = flags.has("--json");
   const ci = flags.has("--ci");
 
   let apps: string[];
   try {
-    apps = resolveApps(cwd, all, cmd === "trigger" ? undefined : target);
+    apps = resolveApps(cwd, all, target);
   } catch (e) {
     console.log(`error: ${e instanceof Error ? e.message : String(e)}`);
     return 2;
   }
-
+  if (tz !== undefined && !isValidTimezone(tz)) {
+    console.log(`error: unknown timezone: "${tz}" (expected IANA name like America/New_York)`);
+    return 2;
+  }
+  const storeMode: ActivityStoreMode = store === undefined ? "sqlite" : store === "sqlite" || store === "jsonl" ? store : "sqlite";
+  if (store !== undefined && store !== "sqlite" && store !== "jsonl") {
+    console.log(`error: unknown store: "${store}" (expected sqlite or jsonl)`);
+    return 2;
+  }
   switch (cmd) {
     case "list": {
       let code = 0;
@@ -99,22 +130,22 @@ export async function run(argv: string[], cwd: string): Promise<number> {
         const now = Date.now();
         const jobsJson = jobs.map((j) => ({
           ...j,
-          nextFireMs: j.status === "active" ? (nextFire(j.expressions, now) ?? undefined) : undefined,
+          nextFireMs: j.status === "active" ? (nextFire(j.expressions, now, tz) ?? undefined) : undefined,
         }));
         if (json) {
-          console.log(JSON.stringify({ app: basename(app), format: 1, jobs: jobsJson, manifest }, null, 2));
+          console.log(JSON.stringify({ app: basename(app), format: 1, tz: tz ?? null, jobs: jobsJson, manifest }, null, 2));
         } else {
-          console.log(`${basename(app)}: ${jobs.length} job(s)`);
+          console.log(`${basename(app)}: ${jobs.length} job(s)${tz ? ` (tz ${tz})` : ""}`);
           for (const j of jobs) {
             const expr = j.status === "invalid" ? (j.error ?? "invalid") : j.expressions.join(", ");
             const marker = j.status === "active" ? "●" : j.status === "disabled" ? "○" : "✕";
-            const due = j.status === "active" ? nextFire(j.expressions, now) : null;
+            const due = j.status === "active" ? nextFire(j.expressions, now, tz) : null;
             const preview = due !== null ? fmtNext(due, now) : j.status === "active" ? "never" : j.status === "disabled" ? "—" : "";
             console.log(`  ${marker} ${j.name}  ${expr}${preview ? `  ${preview}` : ""}`);
           }
           if (!manifest && !ci) console.log("  (no void.crons.json — run void-crons emit)");
           if (manifest) {
-            const activity = readActivityLog(app, 5);
+            const activity = readActivityLog(app, 5, storeMode);
             for (const entry of activity) {
               console.log(`  ↳ ${entry.jobName} ${entry.cron} ${entry.status} ${(entry.durationMs / 1000).toFixed(1)}s`);
             }
@@ -193,7 +224,7 @@ export async function run(argv: string[], cwd: string): Promise<number> {
       }
     }
     case "trigger": {
-      const selector = target;
+      const selector = triggerSelector;
       if (!selector) {
         console.log(`error: trigger needs a job name or cron expression\n${USAGE}`);
         return 2;
@@ -215,16 +246,18 @@ export async function run(argv: string[], cwd: string): Promise<number> {
             const res = await triggerExpression(expression, byName.name, {
               origin,
               devToken,
+              timeoutMs,
+              maxAttempts: retries + 1,
             });
             if (res.entry) fired.push(res.entry);
             if (json) console.log(JSON.stringify({ app: basename(app), format: 1, ...res }));
             else if (res.ok) console.log(`${basename(app)}: fired ${byName.name} ${expression} (${res.entry?.durationMs}ms)`);
             else {
               code = 1;
-              console.log(`${basename(app)}: failed ${byName.name} ${expression}: ${res.entry?.error ?? res.reason ?? "unknown"} (HTTP ${res.httpStatus ?? 0})`);
+              console.log(`${basename(app)}: failed ${byName.name} ${expression}: ${res.entry?.error ?? res.reason ?? "unknown"} (HTTP ${res.httpStatus ?? 0}, attempts ${res.attempts})`);
             }
           }
-          appendActivityLog(app, fired);
+          appendActivityLog(app, fired, storeMode);
           continue;
         }
         // Raw expression: fire it directly (matches Void's dev endpoint semantics).
@@ -245,17 +278,17 @@ export async function run(argv: string[], cwd: string): Promise<number> {
           usesDefineScheduled: false,
           sharedExpression: false,
         };
-        const results = await triggerJob({ ...stub, expressions: [selector] }, { origin, devToken });
+        const results = await triggerJob({ ...stub, expressions: [selector] }, { origin, devToken, timeoutMs, maxAttempts: retries + 1 });
         const fired: CronActivityEntry[] = results.flatMap((r) => (r.entry ? [r.entry] : []));
         for (const res of results) {
           if (json) console.log(JSON.stringify({ app: basename(app), format: 1, ...res }));
-          else if (res.ok) console.log(`${basename(app)}: fired ${name} ${selector}`);
+          else if (res.ok) console.log(`${basename(app)}: fired ${name} ${selector} (${res.entry?.durationMs ?? 0}ms)`);
           else {
             code = 1;
-            console.log(`${basename(app)}: failed ${name} ${selector}: ${res.entry?.error ?? res.reason ?? "unknown"}`);
+            console.log(`${basename(app)}: failed ${name} ${selector}: ${res.entry?.error ?? res.reason ?? "unknown"} (attempts ${res.attempts})`);
           }
         }
-        appendActivityLog(app, fired);
+        appendActivityLog(app, fired, storeMode);
       }
       return code;
     }
@@ -280,12 +313,17 @@ export async function run(argv: string[], cwd: string): Promise<number> {
             origin,
             devToken,
             disabled: [...disabled],
+            tz,
+            timeoutMs,
+            maxAttempts: retries + 1,
+            store: storeMode,
           });
           if (json) {
             console.log(JSON.stringify(
               {
                 format: 1 as const,
                 app: basename(app),
+                tz: tz ?? null,
                 fired: runOnceResult.fired,
                 skipped: runOnceResult.skipped,
               },
@@ -299,7 +337,7 @@ export async function run(argv: string[], cwd: string): Promise<number> {
           }
           continue;
         }
-        await startScheduleLoop(app, { origin, devToken, disabled: [...disabled] });
+        await startScheduleLoop(app, { origin, devToken, disabled: [...disabled], tz, timeoutMs, maxAttempts: retries + 1, store: storeMode });
       }
       return code;
     }
@@ -317,8 +355,8 @@ function readDisabled(app: string): string[] {
 
 const PREVIEW_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
 
-function nextFire(expressions: string[], nowMs: number): number | null {
-  const due = computeDue(expressions, nowMs + 1, nowMs + PREVIEW_WINDOW_MS)[0];
+function nextFire(expressions: string[], nowMs: number, tz?: string): number | null {
+  const due = computeDue(expressions, nowMs + 1, nowMs + PREVIEW_WINDOW_MS, { tz })[0];
   return due ? due.dueMs : null;
 }
 

@@ -35,6 +35,28 @@ describe("computeDue", () => {
   });
 });
 
+describe("timezone", () => {
+  it("computeDue fires 09:00 in the given zone, not server-local", () => {
+    // 2026-01-05 00:30Z: 09:00 in Tokyo already passed, in New York still ahead.
+    const nowMs = Date.UTC(2026, 0, 5, 0, 30);
+    const window = nowMs + 24 * 3600_000;
+    const tokyo = computeDue(["0 9 * * *"], nowMs, window, { tz: "Asia/Tokyo" });
+    const ny = computeDue(["0 9 * * *"], nowMs, window, { tz: "America/New_York" });
+    assert.notEqual(tokyo[0]?.dueMs, ny[0]?.dueMs);
+    assert.equal(new Date(ny[0]?.dueMs ?? 0).toISOString(), "2026-01-05T14:00:00.000Z");
+    assert.equal(new Date(tokyo[0]?.dueMs ?? 0).toISOString(), "2026-01-06T00:00:00.000Z");
+  });
+
+  it("runScheduleOnce rejects unknown zones instead of firing blind", async () => {
+    const app = makeSchedApp({ "nine.ts": `export const cron = '0 9 * * *';\nexport default async () => {};\n` });
+    try {
+      await assert.rejects(() => runScheduleOnce(app, { origin: "http://localhost:5173", tz: "Foo/Bar" }), /unknown timezone/);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("latestDue", () => {
   it("picks the max due time per expression over the catch-up window", () => {
     const from = Date.UTC(2026, 9, 18, 9, 0);

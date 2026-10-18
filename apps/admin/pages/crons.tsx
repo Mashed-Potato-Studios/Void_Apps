@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Header, Button } from '@void-monorepo/ui';
-import { CronPanel } from '@void-monorepo/crons/ui';
-import type { CronActivityEntry, CronJob } from '@void-monorepo/crons';
+import { CronPanel } from 'void-crons/ui';
+import type { CronActivityEntry, CronJob } from 'void-crons';
 import '@void-monorepo/ui/styles.css';
 
 export const head = () => ({

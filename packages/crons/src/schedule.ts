@@ -1,7 +1,7 @@
 import { CronExpressionParser } from "cron-parser";
 import type { CronJob } from "./types.js";
 import { scanCronFiles } from "./scan.js";
-import { appendActivityLog } from "./store.js";
+import { appendActivityLog, type ActivityStoreMode } from "./store.js";
 import { triggerExpression } from "./trigger.js";
 import type { CronActivityEntry } from "./types.js";
 
@@ -10,17 +10,22 @@ export interface CronDue {
   dueMs: number;
 }
 
+export interface CronScheduleZone {
+  /** IANA timezone, e.g. `America/New_York`. Defaults to server-local. */
+  tz?: string;
+}
+
 const MAX_ITER = 2000;
 /** `computeDue` upper bound for callers needing an open-ended horizon (8d list preview). */
 export const FOREVER = 8 * 24 * 60 * 60 * 1000;
 
 /** Due times for each distinct expression inside [fromMs, toMs], sorted by time. */
-export function computeDue(expressions: string[], fromMs: number, toMs: number): CronDue[] {
+export function computeDue(expressions: string[], fromMs: number, toMs: number, opts: CronScheduleZone = {}): CronDue[] {
   const out: CronDue[] = [];
   for (const expr of [...new Set(expressions)]) {
     let parsed;
     try {
-      parsed = CronExpressionParser.parse(expr, { currentDate: new Date(fromMs) });
+      parsed = CronExpressionParser.parse(expr, { currentDate: new Date(fromMs), ...(opts.tz ? { tz: opts.tz } : {}) });
     } catch {
       continue;
     }
@@ -43,8 +48,8 @@ export function computeDue(expressions: string[], fromMs: number, toMs: number):
 }
 
 /** Most recent due time per expression inside the window (catch-up semantics). */
-export function latestDue(expressions: string[], fromMs: number, toMs: number): CronDue[] {
-  const all = computeDue(expressions, fromMs, toMs);
+export function latestDue(expressions: string[], fromMs: number, toMs: number, opts: CronScheduleZone = {}): CronDue[] {
+  const all = computeDue(expressions, fromMs, toMs, opts);
   const last = new Map<string, number>();
   for (const d of all) last.set(d.expr, d.dueMs);
   return [...last.entries()].map(([expr, dueMs]) => ({ expr, dueMs })).sort((a, b) => a.dueMs - b.dueMs);
@@ -80,13 +85,30 @@ export function collectScheduleTargets(
 
 const ONCE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export interface ScheduleOptions {
+export interface ScheduleOptions extends CronScheduleZone {
   origin: string;
   devToken?: string;
   cronSecret?: string;
   fetchImpl?: typeof fetch;
   disabled?: string[];
   nowMs?: number;
+  timeoutMs?: number;
+  maxAttempts?: number;
+  store?: ActivityStoreMode;
+}
+
+/** Throw on unknown IANA zone; cron-parser surfaces bad zones as opaque date errors. */
+export function assertValidTimezone(tz: string): void {
+  if (!isValidTimezone(tz)) throw new Error(`unknown timezone: "${tz}" (expected IANA name like America/New_York)`);
+}
+
+export function isValidTimezone(tz: string): boolean {
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: tz }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface ScheduleRun {
@@ -96,10 +118,11 @@ export interface ScheduleRun {
 
 /** Catch-up: most recent due time per distinct expression inside the trailing 24h, fired once each. */
 export async function runScheduleOnce(appRoot: string, opts: ScheduleOptions): Promise<ScheduleRun> {
+  if (opts.tz !== undefined) assertValidTimezone(opts.tz);
   const jobs = scanCronFiles(appRoot);
   const { active, skipped } = collectScheduleTargets(jobs, new Set(opts.disabled ?? []));
   const nowMs = opts.nowMs ?? Date.now();
-  const latest = latestDue([...active.keys()], nowMs - ONCE_WINDOW_MS, nowMs);
+  const latest = latestDue([...active.keys()], nowMs - ONCE_WINDOW_MS, nowMs, { tz: opts.tz });
   const fired: CronActivityEntry[] = [];
   for (const { expr, dueMs } of latest) {
     const res = await triggerExpression(expr, active.get(expr)!, {
@@ -108,11 +131,13 @@ export async function runScheduleOnce(appRoot: string, opts: ScheduleOptions): P
       cronSecret: opts.cronSecret,
       fetchImpl: opts.fetchImpl,
       scheduledTime: dueMs,
+      timeoutMs: opts.timeoutMs,
+      maxAttempts: opts.maxAttempts,
     });
     if (res.entry) fired.push(res.entry);
     else if (res.reason) skipped.push({ cron: expr, jobName: active.get(expr)!, reason: res.reason });
   }
-  if (fired.length > 0) appendActivityLog(appRoot, fired);
+  if (fired.length > 0) appendActivityLog(appRoot, fired, opts.store);
   return { fired, skipped };
 }
 
@@ -136,10 +161,13 @@ export async function tickSchedule(
     cronSecret?: string;
     fetchImpl?: typeof fetch;
     nowMs: number;
+    timeoutMs?: number;
+    maxAttempts?: number;
+    store?: ActivityStoreMode;
     appendActivity?: { appRoot: string };
-  },
+  } & CronScheduleZone,
 ): Promise<{ state: ScheduleState; fired: CronActivityEntry[]; skipped: ScheduleSkip[] }> {
-  const due = computeDue([...targets.active.keys()], state.checkpointMs, opts.nowMs);
+  const due = computeDue([...targets.active.keys()], state.checkpointMs, opts.nowMs, { tz: opts.tz });
   const fired: CronActivityEntry[] = [];
   const skipped: ScheduleSkip[] = [];
   for (const { expr, dueMs } of due) {
@@ -152,11 +180,13 @@ export async function tickSchedule(
       cronSecret: opts.cronSecret,
       fetchImpl: opts.fetchImpl,
       scheduledTime: dueMs,
+      timeoutMs: opts.timeoutMs,
+      maxAttempts: opts.maxAttempts,
     });
     if (res.entry) fired.push(res.entry);
     else if (res.reason) skipped.push({ cron: expr, jobName: targets.active.get(expr)!, reason: res.reason });
   }
-  if (fired.length > 0 && opts.appendActivity) appendActivityLog(opts.appendActivity.appRoot, fired);
+  if (fired.length > 0 && opts.appendActivity) appendActivityLog(opts.appendActivity.appRoot, fired, opts.store);
   return { state: { checkpointMs: opts.nowMs, firedMinutes: state.firedMinutes }, fired, skipped };
 }
 
@@ -167,16 +197,18 @@ export async function startScheduleLoop(
   appRoot: string,
   opts: ScheduleOptions & { intervalMs?: number; signal?: AbortSignal },
 ): Promise<{ firedTotal: number }> {
+  if (opts.tz !== undefined) assertValidTimezone(opts.tz);
   const intervalMs = opts.intervalMs ?? TICK_MS;
   const disabledNames = new Set(opts.disabled ?? []);
   const { active } = collectScheduleTargets(scanCronFiles(appRoot), disabledNames);
   let state = initScheduleState(opts.nowMs ?? Date.now());
   const SOON = 8 * 24 * 60 * 60 * 1000;
-  const next = latestDue([...active.keys()], state.checkpointMs, state.checkpointMs + SOON)
+  const next = latestDue([...active.keys()], state.checkpointMs, state.checkpointMs + SOON, { tz: opts.tz })
     .sort((a, b) => a.dueMs - b.dueMs)[0];
+  const zone = opts.tz ? ` · tz ${opts.tz}` : "";
   const relay = next ? ` · next ${next.expr} in ${fmtRel(next.dueMs - state.checkpointMs)}` : "";
   console.log(
-    `scheduled ${active.size} ${active.size === 1 ? "expression" : "expressions"} · origin ${opts.origin}${relay}`,
+    `scheduled ${active.size} ${active.size === 1 ? "expression" : "expressions"} · origin ${opts.origin}${zone}${relay}`,
   );
   let firedTotal = 0;
   let stopped = false;
@@ -206,6 +238,10 @@ export async function startScheduleLoop(
         cronSecret: opts.cronSecret,
         fetchImpl: opts.fetchImpl,
         nowMs: Date.now(),
+        tz: opts.tz,
+        timeoutMs: opts.timeoutMs,
+        maxAttempts: opts.maxAttempts,
+        store: opts.store,
         appendActivity: { appRoot },
       });
       state = next_;
