@@ -37,6 +37,7 @@ export default function AdminDashboard({
         links={[
           { label: 'Overview', href: '/', active: true },
           { label: 'Workflows', href: '/workflows' },
+          { label: 'Crons', href: '/crons' },
           { label: 'Stats API', href: '/api/stats' },
           { label: 'Public Web', href: 'http://localhost:5173' },
         ]}

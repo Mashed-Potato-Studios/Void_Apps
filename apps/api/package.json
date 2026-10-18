@@ -10,7 +10,9 @@
     "typecheck": "tsc --noEmit",
     "void:deploy": "void deploy",
     "fp:emit": "void-fingerprint emit",
-    "fp:check": "void-fingerprint check --ci",
+    "crons:list": "void-crons list",
+    "crons:check": "void-crons check",
+    "crons:emit": "void-crons emit",
     "fp:graph": "void-fingerprint graph"
   },
   "dependencies": {
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@types/node": "^22",
     "@void-monorepo/config": "workspace:*",
+    "@void-monorepo/crons": "workspace:*",
     "typescript": "^5.7.3",
     "vite": "^6.0.0",
     "void": "^0.1.0",
