@@ -1,0 +1,12 @@
+{
+  "extends": "@void-monorepo/config/tsconfig/app.json",
+  "include": [
+    "db/**/*",
+    "pages/**/*",
+    "routes/**/*",
+    "crons/**/*",
+    "middleware/**/*",
+    "vite.config.ts",
+    "void.config.ts"
+  ]
+}

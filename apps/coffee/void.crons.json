@@ -1,0 +1,31 @@
+{
+  "format": 1,
+  "app": "coffee",
+  "emittedAt": "2026-10-18T16:48:21.252Z",
+  "jobs": [
+    {
+      "path": "crons/rollover.ts",
+      "name": "rollover",
+      "expressions": [
+        "0 3 * * *"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    },
+    {
+      "path": "crons/top-coffee.ts",
+      "name": "top-coffee",
+      "expressions": [
+        "15 * * * *"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    }
+  ],
+  "expressionCount": 2,
+  "scheduleCount": 2,
+  "disabled": [],
+  "invalid": []
+}
