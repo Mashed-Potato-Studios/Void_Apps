@@ -52,6 +52,27 @@ function readJson(path: string): unknown {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function readVoidConfig(appRoot: string): { target?: string } {
+  let raw: string | null = null;
+  try {
+    raw = readFileSync(join(appRoot, "void.json"), "utf8");
+  } catch {
+    raw = null;
+  }
+  if (raw !== null) {
+    // Present but unparseable void.json is a tool error, not a silent fallback.
+    return JSON.parse(raw) as { target?: string };
+  }
+  // void.config.ts apps (real void@1.x SDK): extract the inline target string.
+  try {
+    const src = readFileSync(join(appRoot, "void.config.ts"), "utf8");
+    const target = src.match(/target\s*:\s*["']([^"']+)["']/)?.[1];
+    return target ? { target } : {};
+  } catch {
+    return {};
+  }
+}
+
 function parsePlugins(appRoot: string): string[] {
   let src: string;
   try {
@@ -75,7 +96,7 @@ export function buildManifest(appRoot: string, opts: EmitOptions = {}): Manifest
     name: string;
     dependencies?: Record<string, string>;
   };
-  const voidJson = readJson(join(appRoot, "void.json")) as { target?: string };
+  const voidJson = readVoidConfig(appRoot);
   const files = scanAppFiles(appRoot, extraPaths);
   const by = (prefix: string): string[] =>
     files.map((f) => f.path).filter((p) => p.startsWith(prefix));

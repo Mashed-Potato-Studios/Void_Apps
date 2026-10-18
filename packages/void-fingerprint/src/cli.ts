@@ -10,12 +10,16 @@ const USAGE = "usage: void-fingerprint <emit|diff|check|graph> [app-path] [--all
 
 const optsFor = optsForApp;
 
-function hasVoidJson(dir: string): boolean {
+function isFile(dir: string, name: string): boolean {
   try {
-    return statSync(join(dir, "void.json")).isFile();
+    return statSync(join(dir, name)).isFile();
   } catch {
     return false;
   }
+}
+
+function hasVoidConfig(dir: string): boolean {
+  return isFile(dir, "void.json") || isFile(dir, "void.config.ts");
 }
 
 function resolveApps(cwd: string, all: boolean, positional?: string): string[] {
@@ -25,7 +29,7 @@ function resolveApps(cwd: string, all: boolean, positional?: string): string[] {
     .map((d) => join(appsDir, d))
     .filter((p) => {
       try {
-        return statSync(p).isDirectory() && hasVoidJson(p);
+        return statSync(p).isDirectory() && hasVoidConfig(p);
       } catch {
         return false;
       }
@@ -108,8 +112,8 @@ export async function run(argv: string[], cwd: string): Promise<number> {
     case "emit": {
       try {
         for (const a of apps) {
-          if (!hasVoidJson(a)) {
-            console.log(`error: not a Void app (no void.json): ${a}`);
+          if (!hasVoidConfig(a)) {
+            console.log(`error: not a Void app (no void.json or void.config.ts): ${a}`);
             return 2;
           }
           const { path } = emitManifest(a, optsFor(a));

@@ -67,7 +67,7 @@ describe("diffManifest", () => {
       const d = diffManifest(appRoot);
       assert.equal(d.clean, false);
       assert.deepEqual(d.changed.map((c) => c.path), ["voidJson"]);
-      assert.equal(d.changed[0]?.evidence, "void.json");
+      assert.equal(d.changed[0]?.evidence, "void.json or void.config.ts");
     } finally {
       writeFileSync(voidJsonPath, orig);
       clearBaseline();
