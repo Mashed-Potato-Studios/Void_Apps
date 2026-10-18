@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scanCronFiles } from "../src/scan.ts";
-import { buildCronManifest, emitCronManifest, readCronManifest } from "../src/manifest.ts";
+import { buildCronManifest, emitCronManifest, readCronManifest, detectDrift } from "../src/manifest.ts";
 import { createCronStore, readActivityLog, appendActivityLog } from "../src/store.ts";
 import { triggerExpression, triggerJob } from "../src/trigger.ts";
 import { run } from "../src/cli.ts";
@@ -284,6 +284,30 @@ describe("void-crons CLI trigger", () => {
       assert.equal(log[0]?.status, "success");
     } finally {
       restore();
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("detectDrift", () => {
+  // pinned Review Focus input 1: manifest exists but jobs removed → drift lines
+  it("reports added/removed/changed files against the manifest", () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT, "cleanup.ts": CLEANUP });
+    try {
+      emitCronManifest(app);
+      const manifest = readCronManifest(app)!;
+      assert.deepEqual(detectDrift(manifest, scanCronFiles(app)), []);
+      // change one file on disk, delete another
+      writeFileSync(
+        join(app, "crons", "cleanup.ts"),
+        `export const cron = '0 3 * * *';\nexport default async () => {};\n`,
+      );
+      rmSync(join(app, "crons", "heartbeat.ts"));
+      const drift = detectDrift(manifest, scanCronFiles(app));
+      assert.equal(drift.length, 2);
+      assert.ok(drift.some((d) => d.includes("-crons/heartbeat.ts removed")));
+      assert.ok(drift.some((d) => d.includes("~crons/cleanup.ts cron '0 * * * *, 30 * * * *' → '0 3 * * *'")));
+    } finally {
       rmSync(app, { recursive: true, force: true });
     }
   });

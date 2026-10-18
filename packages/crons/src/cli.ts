@@ -1,6 +1,6 @@
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { MAX_EXPRESSIONS, MAX_SCHEDULES, buildCronManifest, emitCronManifest, readCronManifest } from "./manifest.js";
+import { MAX_EXPRESSIONS, MAX_SCHEDULES, buildCronManifest, detectDrift, emitCronManifest, readCronManifest } from "./manifest.js";
 import { appendActivityLog, readActivityLog } from "./store.js";
 import type { CronActivityEntry } from "./types.js";
 import { collectScheduleTargets, runScheduleOnce, startScheduleLoop } from "./schedule.js";
@@ -135,18 +135,31 @@ export async function run(argv: string[], cwd: string): Promise<number> {
         if (manifest.scheduleCount > MAX_SCHEDULES) {
           problems.push(`${manifest.scheduleCount}/${MAX_SCHEDULES} schedules (platform limit)`);
         }
+        let drift: string[] = [];
+        if (!flags.has("--no-drift")) {
+          const stored = readCronManifest(app);
+          if (stored) {
+            drift = detectDrift(stored, scanCronFiles(app, { disabled: [...new Set(stored.disabled ?? [])] }));
+            if (drift.length > 0) {
+              code = 1;
+              problems.push(...drift);
+            }
+          }
+        }
         if (problems.length > 0) {
           code = 1;
-          if (json) console.log(JSON.stringify({ app: basename(app), ok: false, problems }, null, 2));
+          if (json) console.log(JSON.stringify({ app: basename(app), ok: false, format: 1, problems, drift }, null, 2));
           else {
             console.log(`${basename(app)}: invalid`);
             for (const p of problems) console.log(`  ✕ ${p}`);
           }
+          if (drift.length > 0 && !json && !ci) console.log(`  run void-crons emit to regenerate`);
         } else if (json) {
           console.log(
             JSON.stringify({
               app: basename(app),
               ok: true,
+              format: 1,
               jobs: manifest.jobs.length,
               expressions: manifest.expressionCount,
               schedules: manifest.scheduleCount,

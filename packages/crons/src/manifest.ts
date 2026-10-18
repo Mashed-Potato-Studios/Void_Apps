@@ -1,7 +1,25 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { scanCronFiles } from "./scan.js";
-import type { CronManifest } from "./types.js";
+import type { CronJob, CronManifest } from "./types.js";
+
+/** Drift lines between a stored manifest and a fresh scan — active sets only, never emittedAt. */
+export function detectDrift(manifest: CronManifest, jobs: CronJob[]): string[] {
+  const lines: string[] = [];
+  const manifestActive = manifest.jobs.filter((j) => j.status === "active");
+  const diskActive = jobs.filter((j) => j.status === "active");
+  const byPath = new Map(manifestActive.map((j) => [j.path, j]));
+  for (const j of diskActive) {
+    const prev = byPath.get(j.path);
+    if (!prev) lines.push(`+${j.path} added`);
+    else if (prev.expressions.join(", ") !== j.expressions.join(", ")) {
+      lines.push(`~${j.path} cron '${prev.expressions.join(", ")}' → '${j.expressions.join(", ")}'`);
+    }
+  }
+  const diskPaths = new Set(diskActive.map((j) => j.path));
+  for (const j of manifestActive) if (!diskPaths.has(j.path)) lines.push(`-${j.path} removed`);
+  return lines;
+}
 
 export const CRON_MANIFEST_FILE = "void.crons.json";
 /** Void platform caps: 100 distinct expressions, 1000 schedules per project. */
