@@ -1,5 +1,9 @@
 import { CronExpressionParser } from "cron-parser";
 import type { CronJob } from "./types.js";
+import { scanCronFiles } from "./scan.js";
+import { appendActivityLog } from "./store.js";
+import { triggerExpression } from "./trigger.js";
+import type { CronActivityEntry } from "./types.js";
 
 export interface CronDue {
   expr: string;
@@ -38,6 +42,72 @@ export function latestDue(expressions: string[], fromMs: number, toMs: number): 
   const last = new Map<string, number>();
   for (const d of all) last.set(d.expr, d.dueMs);
   return [...last.entries()].map(([expr, dueMs]) => ({ expr, dueMs })).sort((a, b) => a.dueMs - b.dueMs);
+}
+
+export interface ScheduleSkip {
+  cron: string;
+  jobName: string;
+  reason: string;
+}
+
+/** expr → jobName for active jobs; disabled jobs become skips, invalid jobs drop. */
+export function collectScheduleTargets(
+  jobs: CronJob[],
+  disabledNames: Set<string>,
+): { active: Map<string, string>; skipped: ScheduleSkip[] } {
+  const active = new Map<string, string>();
+  const skipped: ScheduleSkip[] = [];
+  for (const job of jobs) {
+    if (job.status === "invalid" || job.expressions.length === 0) continue;
+    for (const expr of job.expressions) {
+      if (disabledNames.has(job.name)) {
+        if (!active.has(expr) && !skipped.some((s) => s.jobName === job.name)) {
+          skipped.push({ cron: expr, jobName: job.name, reason: `job "${job.name}" is disabled` });
+        }
+        continue;
+      }
+      if (!active.has(expr)) active.set(expr, job.name);
+    }
+  }
+  return { active, skipped };
+}
+
+const ONCE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+export interface ScheduleOptions {
+  origin: string;
+  devToken?: string;
+  cronSecret?: string;
+  fetchImpl?: typeof fetch;
+  disabled?: string[];
+  nowMs?: number;
+}
+
+export interface ScheduleRun {
+  fired: CronActivityEntry[];
+  skipped: ScheduleSkip[];
+}
+
+/** Catch-up: most recent due time per distinct expression inside the trailing 24h, fired once each. */
+export async function runScheduleOnce(appRoot: string, opts: ScheduleOptions): Promise<ScheduleRun> {
+  const jobs = scanCronFiles(appRoot);
+  const { active, skipped } = collectScheduleTargets(jobs, new Set(opts.disabled ?? []));
+  const nowMs = opts.nowMs ?? Date.now();
+  const latest = latestDue([...active.keys()], nowMs - ONCE_WINDOW_MS, nowMs);
+  const fired: CronActivityEntry[] = [];
+  for (const { expr, dueMs } of latest) {
+    const res = await triggerExpression(expr, active.get(expr)!, {
+      origin: opts.origin,
+      devToken: opts.devToken,
+      cronSecret: opts.cronSecret,
+      fetchImpl: opts.fetchImpl,
+      scheduledTime: dueMs,
+    });
+    if (res.entry) fired.push(res.entry);
+    else if (res.reason) skipped.push({ cron: expr, jobName: active.get(expr)!, reason: res.reason });
+  }
+  if (fired.length > 0) appendActivityLog(appRoot, fired);
+  return { fired, skipped };
 }
 
 export type { CronJob };
