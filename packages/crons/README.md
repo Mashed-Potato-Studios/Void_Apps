@@ -24,11 +24,11 @@ this package implements locally.
 
 ```bash
 npm i -g void-crons
-cd apps/api                                              # the app dir: void.json + crons/
-void-crons check && void-crons emit                      # CI gate + deploy artifact
-void-crons schedule --once                               # catch-up missed fires
-void-crons trigger cleanup                               # fire one job right now
-void-crons ui                                            # interactive dashboard
+cd path/to/your-app                             # the app dir: void.json + crons/
+void-crons check && void-crons emit             # CI gate + deploy artifact
+void-crons schedule --once                      # catch-up missed fires
+void-crons trigger cleanup                      # fire one job right now
+void-crons ui                                   # interactive dashboard
 ```
 
 ## Contents
@@ -85,32 +85,32 @@ crons/
 
 Every command takes an optional app path — the directory containing `void.json`
 and `crons/`. **Omit it to use the current directory.** The examples below run
-from inside the app directory (replace `apps/api` with your app's path):
+from inside the app directory:
 
 ```bash
-cd apps/api
+cd path/to/your-app
 
 # 1. See what the scanner finds (previews use server-local time by default)
 void-crons list
-# apps/api: 3 job(s)
+# your-app: 3 job(s)
 #   ● cleanup    0 2 * * *  next in 18h
 #   ● heartbeat  * * * * *  next in <2m
 #   ● reports    */15 * * * *, 30 9 * * 1  next in 6m
 
 # 2. Gate on it, then freeze the deploy artifact
 void-crons check
-# apps/api: clean (3 jobs, 4 expr, 4 sched)
+# your-app: clean (3 jobs, 4 expr, 4 sched)
 void-crons emit
-# emitted apps/api/void.crons.json
+# emitted path/to/your-app/void.crons.json
 
 # 3. Fire what's due (catch-up for the trailing 24h)
 void-crons schedule --once --origin http://localhost:5173
-# apps/api: fired cleanup 0 2 * * * (24ms)
-# apps/api: caught up (1 fired, 0 skipped)
+# your-app: fired cleanup 0 2 * * * (24ms)
+# your-app: caught up (1 fired, 0 skipped)
 
 # 4. Fire one job on demand
 void-crons trigger cleanup --origin http://localhost:5173
-# apps/api: fired cleanup 0 2 * * * (95ms)
+# your-app: fired cleanup 0 2 * * * (95ms)
 
 # 5. Live loop — fires each expression as its minute passes (Ctrl-C exits 0)
 void-crons schedule --origin http://localhost:5173
@@ -121,8 +121,8 @@ Disabled-job flow:
 
 ```bash
 void-crons schedule --once
-# apps/api: skip job "cleanup" is disabled
-# apps/api: caught up (0 fired, 1 skipped)
+# your-app: skip job "cleanup" is disabled
+# your-app: caught up (0 fired, 1 skipped)
 ```
 
 ## CLI reference
@@ -130,7 +130,7 @@ void-crons schedule --once
 Runs per-app. `[app-path]` is the directory containing `void.json` and
 `crons/`; omit it to use cwd. `--all` scans `apps/*` (each needs `void.json`).
 `trigger` is the one exception: the job selector comes first, then the optional
-app path (`void-crons trigger cleanup apps/api`).
+app path (`void-crons trigger cleanup path/to/your-app`).
 
 | Command | What it does | Non-zero exit |
 |---|---|---|
@@ -173,28 +173,15 @@ Start it **from the app directory** — the one containing `void.json` and
 `crons/`. No path argument needed; it uses the current directory:
 
 ```bash
-cd apps/api
+cd path/to/your-app
 void-crons ui
 ```
 
 Running from somewhere else? Pass the app directory as the one positional
-argument. `ui` is the subcommand; `apps/api` is the path to the app:
+argument. `ui` is the subcommand; `path/to/your-app` is the path to the app:
 
 ```bash
-void-crons ui apps/api
-```
-
-Inside this monorepo, use the workspace binary instead of a global install:
-
-```bash
-cd apps/coffee
-pnpm exec void-crons ui
-```
-
-Or from the repo root:
-
-```bash
-pnpm --filter @void-monorepo/coffee exec void-crons ui
+void-crons ui path/to/your-app
 ```
 
 It needs a real terminal: stdin and stdout must be TTYs, otherwise it exits `2`.
@@ -203,20 +190,19 @@ One app, live in the terminal. Countdowns tick every second; manifest state and
 activity refresh after every action.
 
 ```text
- void-crons · coffee                                   tz local · jsonl · localhost:5173
- 4 jobs · 4 expr · 4 sched                                manifest clean · scan 11:16:36
+ void-crons · api                                      tz local · jsonl · localhost:5173
+ 3 jobs · 4 expr · 4 sched                                manifest clean · scan 12:06:34
 ────────────────────────────────────────────────────────────────────────────────────────
- ● rollover         0 3 * * *                    next 16h       last fail 1h
- ● sales-digest     0 18 * * 5                   next 79h       last ok 3h
- ● stock-alert      30 7 * * *                   next 20h       last ok 21m
->● top-coffee       15 * * * *                   next 58m       last ok 5m
+ ● cleanup          0 2 * * *                    next 14h       last fail 1h
+ ● heartbeat        * * * * *                    next <2m       last ok 1m
+>● reports          */15 * * * *, 30 9 * * 1     next 8m        last ok 4m
 
 ────────────────────────────────────────────────────────────────────────────────────────
  Activity
-  ↳ 08:13 sales-digest 0 18 * * 5 ok 134ms
-  ↳ 10:13 rollover 0 3 * * * fail 10000ms
-  ↳ 10:55 stock-alert 30 7 * * * ok 61ms
-  ↳ 11:11 top-coffee 15 * * * * ok 24ms
+  ↳ 12:05 heartbeat * * * * * ok 18ms
+  ↳ 12:02 reports */15 * * * * ok 134ms
+  ↳ 11:05 cleanup 0 2 * * * fail 10000ms
+  ↳ 10:05 heartbeat * * * * * ok 21ms
 
 ────────────────────────────────────────────────────────────────────────────────────────
  ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · r refresh · q quit
@@ -298,11 +284,11 @@ so `list` shows `never` and the scheduler skips them.
 Cron has no zone field, so the CLI interprets expressions in one zone per run:
 
 ```bash
-void-crons list apps/api --tz UTC
+void-crons list path/to/your-app --tz UTC
 #   ● nine  0 9 * * *  next in 20h
-void-crons list apps/api --tz America/New_York
+void-crons list path/to/your-app --tz America/New_York
 #   ● nine  0 9 * * *  next in 24h
-void-crons list apps/api --tz Pacific/Kiritimati
+void-crons list path/to/your-app --tz Pacific/Kiritimati
 #   ● nine  0 9 * * *  next in 6h
 ```
 
@@ -320,11 +306,11 @@ the prod secret never leaks to localhost.
 
 ```bash
 # Flaky server returns 503 twice, then 200:
-void-crons trigger heartbeat apps/api --origin http://localhost:5499
-# apps/api: failed heartbeat * * * * *: HTTP 503 (HTTP 503, attempts 1)   exit 1
+void-crons trigger heartbeat path/to/your-app --origin http://localhost:5499
+# your-app: failed heartbeat * * * * *: HTTP 503 (HTTP 503, attempts 1)   exit 1
 
-void-crons trigger heartbeat apps/api --origin http://localhost:5499 --retries 3
-# apps/api: fired heartbeat * * * * * (542ms)                            exit 0
+void-crons trigger heartbeat path/to/your-app --origin http://localhost:5499 --retries 3
+# your-app: fired heartbeat * * * * * (542ms)                            exit 0
 ```
 
 - Retries cover 429 / 408 / 425 / 5xx and network errors (including timeouts).
@@ -340,12 +326,12 @@ void-crons trigger heartbeat apps/api --origin http://localhost:5499 --retries 3
 as the CI baseline and deploy artifact:
 
 ```bash
-void-crons emit apps/api && void-crons check apps/api
-# apps/api: clean (3 jobs, 4 expr, 4 sched)
+void-crons emit path/to/your-app && void-crons check path/to/your-app
+# your-app: clean (3 jobs, 4 expr, 4 sched)
 
 # …someone edits crons/nightly.ts 0 2 → 0 3…
-void-crons check apps/api
-# apps/api: invalid
+void-crons check path/to/your-app
+# your-app: invalid
 #   ✕ ~crons/nightly.ts cron '0 2 * * *' → '0 3 * * *'
 #   run void-crons emit to regenerate
 ```
@@ -355,7 +341,7 @@ never ordering, never panel-only disable toggles (those live in the manifest's
 own `disabled` list). Suggested CI:
 
 ```bash
-void-crons check apps/api --ci   # exit 1 on invalid jobs, limit overflow, or drift
+void-crons check path/to/your-app --ci   # exit 1 on invalid jobs, limit overflow, or drift
 ```
 
 ## Activity history
@@ -365,7 +351,7 @@ void-crons check apps/api --ci   # exit 1 on invalid jobs, limit overflow, or dr
 same history `list` tails and `CronPanel` renders:
 
 ```bash
-void-crons list apps/api
+void-crons list path/to/your-app
 #   ● heartbeat  * * * * *  next in <2m
 #   ↳ heartbeat * * * * * success 0.0s
 #   ↳ nine      0 9 * * * success 0.0s
@@ -463,7 +449,7 @@ try {
 | `database is locked` (rare burst) | >WAL writer collision | Retried automatically via busy-timeout; rerun if it escapes |
 | `no defineScheduled` badge | Handler not wrapped | `export default defineScheduled(…)` |
 | `never` in `list` | Nothing due in 8 days (yearly, Feb 30) | Expected — not an error |
-| `dist is stale` stderr note | Edited `src/` without building | `pnpm --filter void-crons build` (bin falls back to `src/` meanwhile) |
+| `dist is stale` stderr note | Edited `src/` without building | `pnpm build` (bin falls back to `src/` meanwhile) |
 
 ## Known limits
 

@@ -1,12 +1,15 @@
-## Todo
-
-TUI for void-crons — spec: `docs/superpowers/specs/crons-tui.md`, plan: `docs/superpowers/plans/2026-10-20-void-crons-tui.md`.
-
-
-
-Constraints: zero new runtime deps, single app only (`--json`/`--all` rejected), toggles session-only (only `emit` persists), terminal always restored, tests need no pty.
-
 ## Doing
+
+TUI live ops — design approved; spec and plan pending.
+
+- [ ] Live schedule loop (`s` start/stop, starts from now, no backfill)
+- [ ] Job detail line under the list + `v` full detail pane
+- [ ] `/` inline filter and `o` sort cycle (next fire / name / status)
+- [ ] `fs.watch` auto-rescan with debounce, preserve filter/toggles/selection
+- [ ] Tests: reducer, render, live-loop tick, watcher debounce, cleanup
+- [ ] README: live-loop keys, filter/sort, detail pane
+
+Constraints: zero new runtime deps, one app, loop starts stopped, manual actions remain busy-gated, terminal always restored.
 
 ## Done
 
