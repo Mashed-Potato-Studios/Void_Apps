@@ -893,3 +893,84 @@ describe("tickSchedule abort", () => {
     assert.equal(result.fired.length, 0);
   });
 });
+
+import { startWatcher, type WatchHandle, type WatchImpl } from "../src/tui/watch.ts";
+
+class FakeWatch implements WatchHandle {
+  closed = false;
+  private errors: Array<() => void> = [];
+  private readonly listener: (event: string, filename: string | null) => void;
+  constructor(listener: (event: string, filename: string | null) => void) {
+    this.listener = listener;
+  }
+  on(_event: "error", listener: () => void): this {
+    this.errors.push(listener);
+    return this;
+  }
+  close(): void {
+    this.closed = true;
+  }
+  emit(filename: string | null): void {
+    this.listener("change", filename);
+  }
+  emitError(): void {
+    for (const listener of this.errors) listener();
+  }
+}
+
+function fakeWatch(): { impl: WatchImpl; created: FakeWatch[] } {
+  const created: FakeWatch[] = [];
+  const impl: WatchImpl = (_path, _options, listener) => {
+    const watch = new FakeWatch(listener);
+    created.push(watch);
+    return watch;
+  };
+  return { impl, created };
+}
+
+describe("tui watcher", () => {
+  it("debounces cron changes into one callback", async () => {
+    const { impl, created } = fakeWatch();
+    let calls = 0;
+    const handle = startWatcher("/app", () => calls++, { debounceMs: 10, watchImpl: impl });
+    created[0]?.emit("cleanup.ts");
+    created[0]?.emit("heartbeat.ts");
+    created[0]?.emit("reports.ts");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(calls, 1);
+    handle.close();
+  });
+
+  it("ignores activity writes but reacts to the manifest", async () => {
+    const { impl, created } = fakeWatch();
+    let calls = 0;
+    const handle = startWatcher("/app", () => calls++, { debounceMs: 5, watchImpl: impl });
+    created[1]?.emit("void.crons.activity.sqlite");
+    created[1]?.emit("void.crons.activity.jsonl");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls, 0);
+
+    created[1]?.emit("void.crons.json");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls, 1);
+    handle.close();
+  });
+
+  it("closes both watchers and survives watch errors", () => {
+    const { impl, created } = fakeWatch();
+    const handle = startWatcher("/app", () => {}, { watchImpl: impl });
+    created[0]?.emitError();
+    assert.equal(handle.failed, true);
+    handle.close();
+    assert.equal(created[0]?.closed, true);
+    assert.equal(created[1]?.closed, true);
+
+    const failed = startWatcher("/app", () => {}, {
+      watchImpl: () => {
+        throw new Error("watch failed");
+      },
+    });
+    assert.equal(failed.failed, true);
+    failed.close();
+  });
+});
