@@ -241,3 +241,22 @@ describe("tui snapshot loader", () => {
     }
   });
 });
+
+import { keyToMsg } from "../src/tui/keys.ts";
+
+describe("tui keys", () => {
+  it("maps navigation and actions", () => {
+    assert.deepEqual(keyToMsg(undefined, { name: "up" }), { type: "move", delta: -1 });
+    assert.deepEqual(keyToMsg(undefined, { name: "down" }), { type: "move", delta: 1 });
+    assert.deepEqual(keyToMsg("j", { name: "j" }), { type: "move", delta: 1 });
+    assert.deepEqual(keyToMsg("k", { name: "k" }), { type: "move", delta: -1 });
+    assert.deepEqual(keyToMsg("\r", { name: "return" }), { type: "trigger" });
+    assert.deepEqual(keyToMsg("d", { name: "d" }), { type: "toggle" });
+    assert.deepEqual(keyToMsg("e", { name: "e" }), { type: "emit" });
+    assert.deepEqual(keyToMsg("c", { name: "c" }), { type: "catchup" });
+    assert.deepEqual(keyToMsg("r", { name: "r" }), { type: "refresh" });
+    assert.deepEqual(keyToMsg("q", { name: "q" }), { type: "quit" });
+    assert.deepEqual(keyToMsg("\u0003", { name: "c", ctrl: true }), { type: "quit" });
+    assert.equal(keyToMsg("x", { name: "x" }), null);
+  });
+});
