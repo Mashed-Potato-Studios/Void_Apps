@@ -9,7 +9,8 @@
 - [x] Abortable schedule ticks (`757b8ee`)
 - [x] Runner loop + watcher integration (`4d98e6b`)
 - [x] Tests: model, keys, render, watcher, runner, abort (`4d98e6b`)
-- [x] README live-loop/filter/sort/detail docs, screenshot, `0.3.0`
+- [x] README live-loop/filter/sort/detail docs, screenshot, `0.3.0` (`cd5a361`, `35179ad`)
+- [x] Final review fixes: discard stale loop ticks, advance idle checkpoint (`7f1b707`; 99 tests)
 
 ### TUI (0.2.0)
 

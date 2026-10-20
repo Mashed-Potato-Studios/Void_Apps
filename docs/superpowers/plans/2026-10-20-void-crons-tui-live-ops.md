@@ -305,8 +305,8 @@ export function activityRowsForHeight(height: number): number {
 
 export function jobRowsForHeight(height: number): number {
   const activity = activityRowsForHeight(height);
-  if (activity === 0) return Math.max(1, height - 7);
-  return Math.max(1, height - 9 - activity);
+  if (activity === 0) return Math.max(1, height - 6);
+  return Math.max(1, height - 8 - activity);
 }
 
 export function createState(input: {
@@ -793,7 +793,19 @@ pnpm exec node --test --test-concurrency=1 --import ./test/hooks/register.mjs te
 
 Expected: FAIL — live/filter/detail output missing.
 
-- [ ] **Step 3: Rewrite `src/tui/render.ts`**
+- [ ] **Step 3: Reserve one row for the detail line**
+
+In `src/tui/model.ts`, change `jobRowsForHeight` to:
+
+```ts
+export function jobRowsForHeight(height: number): number {
+  const activity = activityRowsForHeight(height);
+  if (activity === 0) return Math.max(1, height - 7);
+  return Math.max(1, height - 9 - activity);
+}
+```
+
+- [ ] **Step 4: Rewrite `src/tui/render.ts`**
 
 ```ts
 import type { CronActivityEntry } from "../types.js";
@@ -963,9 +975,9 @@ function keysLine(state: TuiState, width: number): string {
     return truncate(` filter: ${state.filter}  · enter apply · esc clear`, width);
   }
   const full = " ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r refresh · q quit";
-  const mid = " ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · v detail · q quit";
-  const small = " ↑↓ · ↵ · d · e · c · s · / · o · v · r · q";
-  return truncate(width >= 100 ? full : width >= 64 ? mid : small, width);
+  const mid = " ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r · q";
+  const small = " ↑↓ move · ↵ · d e c s / o v r q";
+  return truncate(width >= 112 ? full : width >= 64 ? mid : small, width);
 }
 
 function statusLine(state: TuiState, width: number, nowMs: number): string {
@@ -1064,7 +1076,7 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
 }
 ```
 
-- [ ] **Step 4: Run render tests**
+- [ ] **Step 5: Run render tests**
 
 ```bash
 pnpm exec node --test --test-concurrency=1 --import ./test/hooks/register.mjs test/tui.test.ts
@@ -1072,11 +1084,11 @@ pnpm exec node --test --test-concurrency=1 --import ./test/hooks/register.mjs te
 
 Expected: PASS.
 
-- [ ] **Step 5: Typecheck and commit**
+- [ ] **Step 6: Typecheck and commit**
 
 ```bash
 pnpm typecheck
-git add packages/crons/src/tui/render.ts packages/crons/test/tui.test.ts
+git add packages/crons/src/tui/render.ts packages/crons/src/tui/model.ts packages/crons/test/tui.test.ts
 git commit -m "feat(crons): render live loop, filter, sort, and detail"
 ```
 
@@ -1172,7 +1184,10 @@ import { startWatcher, type WatchHandle, type WatchImpl } from "../src/tui/watch
 class FakeWatch implements WatchHandle {
   closed = false;
   private errors: Array<() => void> = [];
-  constructor(private readonly listener: (event: string, filename: string | null) => void) {}
+  private readonly listener: (event: string, filename: string | null) => void;
+  constructor(listener: (event: string, filename: string | null) => void) {
+    this.listener = listener;
+  }
   on(_event: "error", listener: () => void): this {
     this.errors.push(listener);
     return this;
@@ -1383,7 +1398,6 @@ In every existing `startTui(..., { ... })` options object under `describe("tui r
 Append:
 
 ```ts
-import { tickSchedule } from "../src/schedule.ts";
 import type { WatcherHandle } from "../src/tui/watch.ts";
 
 describe("tui live-ops runner", () => {
