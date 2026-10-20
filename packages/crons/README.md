@@ -1,10 +1,10 @@
 # `void-crons`
 
-![version](https://img.shields.io/badge/version-0.1.1-blue)
+![version](https://img.shields.io/badge/version-0.2.0-blue)
 ![node](https://img.shields.io/badge/node-%3E%3D22.6-339933?logo=node.js&logoColor=white)
 ![type](https://img.shields.io/badge/module-ESM-yellow)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-39_passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-64_passed-brightgreen)
 ![cron-parser](https://img.shields.io/badge/cron--parser-v5-orange)
 ![react](https://img.shields.io/badge/react-18_%7C_19_optional-61dafb)
 ![platform](https://img.shields.io/badge/platform-cloudflare-F38020?logo=cloudflare&logoColor=white)
@@ -15,8 +15,8 @@
 > directory, this package isn't for you.
 
 Local lifecycle for Void `crons/` — scan, validate, preview, manifest, drift-check,
-catch-up, live scheduling, retries, and activity history. One CLI (`void-crons`),
-one library, one React panel.
+catch-up, live scheduling, retries, activity history, and an interactive terminal UI.
+One CLI (`void-crons`), one library, one React panel.
 
 New to Void? Start at [void.cloud](https://void.cloud/) — particularly the
 [jobs guide](https://void.cloud/guide/jobs), which defines the `crons/` contract
@@ -27,6 +27,7 @@ npm i -g void-crons
 void-crons check apps/api && void-crons emit apps/api   # CI gate + deploy artifact
 void-crons schedule apps/api --once                      # catch-up missed fires
 void-crons trigger cleanup apps/api                      # fire one job right now
+void-crons ui apps/api                                   # interactive dashboard
 ```
 
 ## Contents
@@ -34,6 +35,7 @@ void-crons trigger cleanup apps/api                      # fire one job right no
 - [The Void contract](#the-void-contract)
 - [Quick start](#quick-start)
 - [CLI reference](#cli-reference)
+- [TUI](#tui)
 - [Job files in depth](#job-files-in-depth)
 - [Validation](#validation)
 - [Timezones](#timezones)
@@ -164,6 +166,27 @@ void-crons ui apps/api
 
 One app, live in the terminal. Countdowns tick every second; manifest state and
 activity refresh after every action.
+
+```text
+ void-crons · coffee                                   tz local · jsonl · localhost:5173
+ 4 jobs · 4 expr · 4 sched                                manifest clean · scan 11:16:36
+────────────────────────────────────────────────────────────────────────────────────────
+ ● rollover         0 3 * * *                    next 16h       last fail 1h
+ ● sales-digest     0 18 * * 5                   next 79h       last ok 3h
+ ● stock-alert      30 7 * * *                   next 20h       last ok 21m
+>● top-coffee       15 * * * *                   next 58m       last ok 5m
+
+────────────────────────────────────────────────────────────────────────────────────────
+ Activity
+  ↳ 08:13 sales-digest 0 18 * * 5 ok 134ms
+  ↳ 10:13 rollover 0 3 * * * fail 10000ms
+  ↳ 10:55 stock-alert 30 7 * * * ok 61ms
+  ↳ 11:11 top-coffee 15 * * * * ok 24ms
+
+────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · r refresh · q quit
+ status: ready
+```
 
 | Key | Action |
 |---|---|
