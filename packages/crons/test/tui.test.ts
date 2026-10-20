@@ -3,6 +3,12 @@ import assert from "node:assert/strict";
 import { createState, reduce, type JobView, type Snapshot, type TuiState } from "../src/tui/model.ts";
 import type { CronActivityEntry, CronJob } from "../src/types.ts";
 import { render, truncate } from "../src/tui/render.ts";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+import { loadSnapshot } from "../src/tui/data.ts";
+import { appendActivityLog } from "../src/store.ts";
+import { emitCronManifest } from "../src/manifest.ts";
 
 function job(name: string, status: CronJob["status"] = "active", expressions = ["* * * * *"]): JobView {
   return {
@@ -166,5 +172,72 @@ describe("tui render", () => {
   it("truncates long text with an ellipsis", () => {
     assert.equal(truncate("abcdef", 4), "abc…");
     assert.equal(truncate("abc", 4), "abc");
+  });
+});
+
+function makeApp(files: Record<string, string>): string {
+  const dir = mkdtempSync(join(tmpdir(), "crons-tui-"));
+  mkdirSync(join(dir, "crons"), { recursive: true });
+  for (const [name, source] of Object.entries(files)) writeFileSync(join(dir, "crons", name), source);
+  return dir;
+}
+
+const HEARTBEAT = `import { defineScheduled } from 'void';\nexport const cron = '* * * * *';\nexport default defineScheduled(async () => {});\n`;
+
+describe("tui snapshot loader", () => {
+  it("loads jobs, manifest state, next fires, and activity", () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    try {
+      emitCronManifest(app);
+      appendActivityLog(
+        app,
+        [
+          {
+            id: "a1",
+            jobName: "heartbeat",
+            cron: "* * * * *",
+            scheduledTime: new Date(0).toISOString(),
+            finishedAt: new Date(0).toISOString(),
+            durationMs: 12,
+            status: "success",
+            source: "local",
+          },
+        ],
+        "jsonl",
+      );
+      const snap = loadSnapshot(app, { storeMode: "jsonl", nowMs: Date.UTC(2026, 0, 1) });
+      assert.equal(snap.appName, basename(app));
+      assert.equal(snap.manifest, "clean");
+      assert.equal(snap.jobs.length, 1);
+      assert.equal(snap.jobs[0]?.status, "active");
+      assert.ok(typeof snap.jobs[0]?.nextFireMs === "number");
+      assert.equal(snap.activity[0]?.jobName, "heartbeat");
+      assert.equal(snap.jobs[0]?.last?.id, "a1");
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it("reports missing manifests, drift, and disabled overlays", () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    try {
+      const missing = loadSnapshot(app, { storeMode: "jsonl" });
+      assert.equal(missing.manifest, "missing");
+
+      emitCronManifest(app);
+      writeFileSync(
+        join(app, "crons", "heartbeat.ts"),
+        `import { defineScheduled } from 'void';\nexport const cron = '5 * * * *';\nexport default defineScheduled(async () => {});\n`,
+      );
+      const drifted = loadSnapshot(app, { storeMode: "jsonl" });
+      assert.equal(drifted.manifest, "drift");
+      assert.ok(drifted.drift.length > 0);
+
+      const disabled = loadSnapshot(app, { storeMode: "jsonl", disabled: ["heartbeat"] });
+      assert.equal(disabled.jobs[0]?.status, "disabled");
+      assert.equal(disabled.jobs[0]?.nextFireMs, null);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
   });
 });
