@@ -1,6 +1,6 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
-import { CronExpressionParser } from "cron-parser";
+import { join, relative, resolve } from "node:path";
+import { validateCloudflareCron } from "./cron-expr.js";
 import type { CronJob } from "./types.js";
 export const CRON_DIR = "crons";
 export const CRON_EXTS = [".ts", ".mts", ".js", ".mjs"] as const;
@@ -11,23 +11,13 @@ const ARRAY_EXPORT =
   /export\s+const\s+cron\s*(?::\s*(?:string\s*\[\]|Array<string>))?\s*=\s*\[([\s\S]*?)\]/;
 const QUOTED = /["']([^"']+)["']/g;
 
-// cron-parser range check: parse() alone only checks tokens;
-// next() enforces ranges like 0-59/0-23/1-31/1-12/0-7.
 /**
- * Synchronous cron check: shape (5 fields) plus cron-parser range validation.
- * Rejects garbage like `99 99 99 99 99`; accepts DOW names like `MON`.
+ * Synchronous cron check against Cloudflare's Cron Trigger grammar.
+ * Accepts Quartz extensions (`L`, `LW`, `15W`, `2#2`, `?`) and DOW names;
+ * rejects out-of-range values and non-5-field expressions.
  */
 export function isCronExpression(value: string): boolean {
-  const trimmed = value.trim();
-  const parts = trimmed.split(/\s+/);
-  if (parts.length !== 5) return false;
-  if (!parts.every((p) => /^[A-Za-z0-9*,\-/]+$/.test(p))) return false;
-  try {
-    CronExpressionParser.parse(trimmed).next();
-    return true;
-  } catch {
-    return false;
-  }
+  return validateCloudflareCron(value) === null;
 }
 
 /** Strip line/block comments so commented-out exports never scan as real. String-safe. */
@@ -117,17 +107,7 @@ function detectsDefineScheduled(source: string): boolean {
 }
 
 function cronError(expr: string): string {
-  const parts = expr.trim().split(/\s+/);
-  if (parts.length !== 5) return `unsupported cron expression: "${expr}" (expected 5-field cron)`;
-  if (!parts.every((p) => /^[A-Za-z0-9*,\-/]+$/.test(p)))
-    return `unsupported cron expression: "${expr}" (expected 5-field cron)`;
-  try {
-    CronExpressionParser.parse(expr.trim()).next();
-    return `unsupported cron expression: "${expr}" (expected 5-field cron)`;
-  } catch (e) {
-    const detail = e instanceof Error ? e.message : String(e);
-    return `invalid cron expression: "${expr}" (${detail})`;
-  }
+  return validateCloudflareCron(expr) ?? `invalid cron expression: "${expr}"`;
 }
 
 function parseExpressions(source: string): { expressions: string[]; error?: string } {
@@ -147,7 +127,7 @@ function parseExpressions(source: string): { expressions: string[]; error?: stri
   if (/export\s+(?:const|let|var)\s+cron\b/.test(source)) {
     return { expressions: [], error: "unsupported cron export: use a string literal or array of string literals" };
   }
-  return { expressions: [], error: "missing `export const cron`: Void ignores this file on deploy" };
+  return { expressions: [], error: "missing `export const cron`: void build fails for files in crons/ without a cron export" };
 }
 
 function walk(dir: string, root: string, out: string[] = []): string[] {
@@ -188,7 +168,9 @@ export function scanCronFiles(
   const disabled = new Set(opts.disabled ?? []);
   const jobs: CronJob[] = files.map((abs) => {
     const rel = relative(appRoot, abs).replace(/\\/g, "/");
-    const name = basename(abs).replace(/\.(m?ts|m?js)$/, "");
+    // Void names jobs by their path inside crons/ without the extension
+    // (`crons/billing/daily.ts` → `billing/daily`), so nested files never collide.
+    const name = rel.replace(new RegExp(`^${CRON_DIR}/`), "").replace(/\.[^./]+$/, "");
     let source = "";
     try {
       source = readFileSync(abs, "utf8");

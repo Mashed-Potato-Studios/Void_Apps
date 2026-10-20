@@ -1,4 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
+import { cronParserInput } from "./cron-expr.js";
 import type { CronJob } from "./types.js";
 import { scanCronFiles } from "./scan.js";
 import { appendActivityLog, type ActivityStoreMode } from "./store.js";
@@ -19,13 +20,22 @@ const MAX_ITER = 2000;
 /** `computeDue` upper bound for callers needing an open-ended horizon (8d list preview). */
 export const FOREVER = 8 * 24 * 60 * 60 * 1000;
 
-/** Due times for each distinct expression inside [fromMs, toMs], sorted by time. */
+/** Due times for each distinct expression inside [fromMs, toMs], sorted by time.
+ *
+ *  Cloudflare evaluates schedules in UTC and numbers day-of-week 1=Sun…7=Sat,
+ *  so expressions are normalized before parsing and `opts.tz` defaults to UTC.
+ *  Pass an IANA zone only to preview a different wall clock deliberately.
+ *  Expressions the local parser cannot evaluate (`LW`, `15W`, `L-3`) yield no
+ *  due times — they are valid, just not previewable; see `isPreviewSupported`. */
 export function computeDue(expressions: string[], fromMs: number, toMs: number, opts: CronScheduleZone = {}): CronDue[] {
+  const tz = opts.tz ?? "UTC";
   const out: CronDue[] = [];
   for (const expr of [...new Set(expressions)]) {
+    const input = cronParserInput(expr);
+    if (input === null) continue;
     let parsed;
     try {
-      parsed = CronExpressionParser.parse(expr, { currentDate: new Date(fromMs), ...(opts.tz ? { tz: opts.tz } : {}) });
+      parsed = CronExpressionParser.parse(input, { currentDate: new Date(fromMs), tz });
     } catch {
       continue;
     }

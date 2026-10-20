@@ -31,12 +31,22 @@ export interface CronManifest {
   app: string;
   emittedAt: string;
   jobs: CronJob[];
+  /** One entry per active expression — the exact shape `void deploy` publishes
+   *  (`{ name, cron }`, job name is the path inside crons/ without extension).
+   *  Optional so manifests emitted before this field still parse. */
+  schedules?: CronSchedule[];
   /** Distinct expression count (Void platform limit: 100). */
   expressionCount: number;
   /** Total schedule count (Void platform limit: 1000). */
   scheduleCount: number;
   disabled: string[];
   invalid: { path: string; error: string }[];
+}
+
+export interface CronSchedule {
+  /** Job name as Void deploy publishes it: path inside crons/ without extension. */
+  name: string;
+  cron: string;
 }
 
 export interface CronActivityEntry {

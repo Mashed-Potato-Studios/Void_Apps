@@ -113,7 +113,9 @@ describe("runScheduleOnce", () => {
   it("out-of-window and invalid jobs contribute nothing", async () => {
     const app = makeSchedApp({
       "broken.ts": "export default async () => {};\n",
-      "late.ts": `export const cron = ['0 2 * * 1'];\nexport default async () => {};\n`,
+      // Cloudflare day-of-week: 2 = Monday. Monday 02:00 lies ahead of the
+      // Sunday 10:00 checkpoint, so it falls outside the trailing window.
+      "late.ts": `export const cron = ['0 2 * * 2'];\nexport default async () => {};\n`,
     });
     const calls: { url: string; cron: string }[] = [];
     // now = Sunday 10:00 → Monday 02:00 due lies ahead of [now-24h, now] window

@@ -6,6 +6,7 @@ import type { CronActivityEntry } from "./types.js";
 import { computeDue, isValidTimezone, runScheduleOnce, startScheduleLoop } from "./schedule.js";
 import { triggerExpression, triggerJob } from "./trigger.js";
 import { isCronExpression, scanCronFiles } from "./scan.js";
+import { allPreviewSupported } from "./cron-expr.js";
 import { startTui, type TuiOptions } from "./tui/run.js";
 
 const USAGE = [
@@ -21,7 +22,7 @@ const USAGE = [
   "  --origin URL   dev server origin (default http://localhost:5173)",
   "  --cron EXPR    expression to fire when triggering by job name",
   "  --token T      x-void-dev-trigger value (else --dev-token is omitted)",
-  "  --tz ZONE      IANA timezone for schedule + previews (default server-local)",
+  "  --tz ZONE      IANA timezone for schedule + previews (default UTC, matching Cloudflare)",
   "  --retries N    retry attempts on 429/5xx/network (default 0); backoff 500ms doubling",
   "  --timeout MS   per-attempt HTTP timeout (default 10000)",
   "  --store MODE   activity store: sqlite (WAL, default) or jsonl (legacy file)",
@@ -169,7 +170,7 @@ export async function run(
             const expr = j.status === "invalid" ? (j.error ?? "invalid") : j.expressions.join(", ");
             const marker = j.status === "active" ? "●" : j.status === "disabled" ? "○" : "✕";
             const due = j.status === "active" ? nextFire(j.expressions, now, tz) : null;
-            const preview = due !== null ? fmtNext(due, now) : j.status === "active" ? "never" : j.status === "disabled" ? "—" : "";
+            const preview = due !== null ? fmtNext(due, now) : j.status === "active" ? (allPreviewSupported(j.expressions) ? "never" : "preview n/a") : j.status === "disabled" ? "—" : "";
             console.log(`  ${marker} ${j.name}  ${expr}${preview ? `  ${preview}` : ""}`);
           }
           if (!manifest && !ci) console.log("  (no void.crons.json — run void-crons emit)");
@@ -382,7 +383,9 @@ function readDisabled(app: string): string[] {
   return manifest?.disabled ?? [];
 }
 
-const PREVIEW_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
+// Covers every cron cycle (longest month is 31 days) so monthly forms like
+// `0 9 * * 2#2` report a real next fire instead of "never".
+const PREVIEW_WINDOW_MS = 40 * 24 * 60 * 60 * 1000;
 
 function nextFire(expressions: string[], nowMs: number, tz?: string): number | null {
   const due = computeDue(expressions, nowMs + 1, nowMs + PREVIEW_WINDOW_MS, { tz })[0];
@@ -393,5 +396,6 @@ function fmtNext(dueMs: number, nowMs: number): string {
   const s = Math.max(60, Math.round((dueMs - nowMs) / 1000));
   if (s < 120) return "next in <2m";
   if (s < 5400) return `next in ${Math.round(s / 60)}m`;
+  if (s >= 36 * 3600) return `next in ${Math.round(s / 86400)}d`;
   return `next in ${Math.round(s / 3600)}h`;
 }
