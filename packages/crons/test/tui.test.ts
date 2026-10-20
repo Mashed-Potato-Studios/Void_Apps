@@ -284,3 +284,219 @@ describe("trigger abort", () => {
     assert.match(result.entry?.error ?? "", /aborted/);
   });
 });
+
+import { startTui, type TuiActions } from "../src/tui/run.ts";
+
+class FakeInput {
+  isTTY = true;
+  rawMode: boolean[] = [];
+  private listeners: Array<(str: string | undefined, key: { name?: string; ctrl?: boolean } | undefined) => void> = [];
+  setRawMode(value: boolean): void {
+    this.rawMode.push(value);
+  }
+  resume(): void {}
+  pause(): void {}
+  setEncoding(): void {}
+  on(_event: "keypress", listener: (str: string | undefined, key: { name?: string } | undefined) => void): void {
+    this.listeners.push(listener);
+  }
+  off(_event: "keypress", listener: (str: string | undefined, key: { name?: string } | undefined) => void): void {
+    this.listeners = this.listeners.filter((item) => item !== listener);
+  }
+  press(str: string, key: { name?: string; ctrl?: boolean } = {}): void {
+    for (const listener of [...this.listeners]) listener(str, key);
+  }
+}
+
+class FakeOutput {
+  isTTY = true;
+  columns = 80;
+  rows = 24;
+  chunks: string[] = [];
+  write(chunk: string): boolean {
+    this.chunks.push(chunk);
+    return true;
+  }
+}
+
+class FakeSignals {
+  handlers = new Map<string, () => void>();
+  on(signal: string, handler: () => void): void {
+    this.handlers.set(signal, handler);
+  }
+  off(signal: string, _handler: () => void): void {
+    this.handlers.delete(signal);
+  }
+  emit(signal: string): void {
+    this.handlers.get(signal)?.();
+  }
+}
+
+function fakeActions(over: Partial<TuiActions> = {}): TuiActions {
+  return {
+    load: () => snapshot(),
+    trigger: async () => [],
+    emit: () => ({ path: "/tmp/demo/void.crons.json" }),
+    catchUp: async () => ({ fired: [], skipped: [] }),
+    ...over,
+  };
+}
+
+describe("tui runner", () => {
+  it("refuses non-TTY streams before entering the alternate screen", async () => {
+    const input = new FakeInput();
+    input.isTTY = false;
+    const output = new FakeOutput();
+    const errors: string[] = [];
+    const code = await startTui(
+      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        stderr: { write: (line: string) => errors.push(line) },
+        signals: new FakeSignals() as never,
+      },
+    );
+    assert.equal(code, 2);
+    assert.ok(errors.join("").includes("interactive terminal"));
+    assert.equal(output.chunks.length, 0);
+  });
+
+  it("quits cleanly and restores the terminal", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const promise = startTui(
+      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+      },
+    );
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+    assert.deepEqual(input.rawMode, [true, false]);
+    assert.ok(output.chunks.some((chunk) => chunk.includes("\u001b[?1049h")));
+    assert.ok(output.chunks.at(-1)?.includes("\u001b[?1049l"));
+  });
+
+  it("runs one trigger at a time while busy", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let calls = 0;
+    let finish: (() => void) | undefined;
+    const actions = fakeActions({
+      trigger: async () => {
+        calls++;
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        return [];
+      },
+    });
+    const promise = startTui(
+      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions,
+      },
+    );
+    input.press("\r", { name: "return" });
+    input.press("\r", { name: "return" });
+    assert.equal(calls, 1);
+    finish?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("reports an error instead of firing an invalid job", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let calls = 0;
+    const actions = fakeActions({
+      load: () => snapshot([job("broken", "invalid")]),
+      trigger: async () => {
+        calls++;
+        return [];
+      },
+    });
+    const promise = startTui(
+      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions,
+      },
+    );
+    input.press("\r", { name: "return" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(calls, 0);
+    const frame = output.chunks.at(-1) ?? "";
+    assert.match(frame, /invalid/);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("passes the session disabled set to emit", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const emitted: string[][] = [];
+    const promise = startTui(
+      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          emit: (disabled) => {
+            emitted.push(disabled);
+            return { path: "/tmp/demo/void.crons.json" };
+          },
+        }),
+      },
+    );
+    input.press("d", { name: "d" });
+    input.press("e", { name: "e" });
+    assert.deepEqual(emitted, [["alpha"]]);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("cleans up on SIGINT", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const signals = new FakeSignals();
+    const promise = startTui(
+      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: signals as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+      },
+    );
+    signals.emit("SIGINT");
+    assert.equal(await promise, 130);
+    assert.ok(output.chunks.at(-1)?.includes("\u001b[?1049l"));
+  });
+});
