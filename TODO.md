@@ -1,6 +1,6 @@
 ## Doing
 
-TUI live ops — design approved; spec and plan pending.
+TUI live ops — spec: `docs/superpowers/specs/crons-tui-live-ops.md`; plan: `docs/superpowers/plans/2026-10-20-void-crons-tui-live-ops.md`.
 
 - [ ] Live schedule loop (`s` start/stop, starts from now, no backfill)
 - [ ] Job detail line under the list + `v` full detail pane
@@ -9,7 +9,7 @@ TUI live ops — design approved; spec and plan pending.
 - [ ] Tests: reducer, render, live-loop tick, watcher debounce, cleanup
 - [ ] README: live-loop keys, filter/sort, detail pane
 
-Constraints: zero new runtime deps, one app, loop starts stopped, manual actions remain busy-gated, terminal always restored.
+Constraints: zero new runtime deps, one app, loop starts stopped, loop ticks never overlap, manual actions suppress new loop ticks, terminal always restored.
 
 ## Done
 
