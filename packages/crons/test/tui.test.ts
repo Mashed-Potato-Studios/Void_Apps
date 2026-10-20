@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createState, reduce, type JobView, type Snapshot, type TuiState } from "../src/tui/model.ts";
-import type { CronJob } from "../src/types.ts";
+import type { CronActivityEntry, CronJob } from "../src/types.ts";
+import { render, truncate } from "../src/tui/render.ts";
 
 function job(name: string, status: CronJob["status"] = "active", expressions = ["* * * * *"]): JobView {
   return {
@@ -98,5 +99,72 @@ describe("tui model", () => {
     s = reduce(s, { type: "status", kind: "success", message: "ok" });
     assert.equal(s.busy, null);
     assert.equal(s.status?.message, "ok");
+  });
+});
+
+describe("tui render", () => {
+  it("renders a full 80x24 frame without wrapping", () => {
+    const s = state({
+      activity: [
+        {
+          id: "1",
+          jobName: "alpha",
+          cron: "* * * * *",
+          scheduledTime: new Date(0).toISOString(),
+          finishedAt: new Date(0).toISOString(),
+          durationMs: 24,
+          status: "success",
+          source: "local",
+        } satisfies CronActivityEntry,
+      ],
+    });
+    const lines = render(s, 60_000, false);
+    assert.equal(lines.length, 24);
+    assert.ok(lines.every((line) => [...line].length <= 80));
+    const text = lines.join("\n");
+    assert.match(text, /void-crons · demo/);
+    assert.match(text, /alpha/);
+    assert.match(text, /Activity/);
+    assert.match(text, /status: ready/);
+    assert.ok(!text.includes("\u001b"));
+  });
+
+  it("keeps narrow frames inside the terminal width", () => {
+    const s = state({
+      width: 50,
+      height: 20,
+      jobs: [job("very-long-job-name-that-would-overflow", "active", ["*/15 * * * *", "30 9 * * 1"])],
+    });
+    const lines = render(s, 60_000, false);
+    assert.equal(lines.length, 20);
+    assert.ok(lines.every((line) => [...line].length <= 50), "all lines fit 50 columns");
+    assert.ok(lines.some((line) => line.includes("very-long-")));
+    assert.ok(lines.some((line) => line.includes("move")));
+  });
+
+  it("drops the activity pane on short terminals", () => {
+    const s = state({ width: 39, height: 13 });
+    const lines = render(s, 60_000, false);
+    assert.equal(lines.length, 13);
+    assert.ok(lines.every((line) => [...line].length <= 39));
+    assert.ok(!lines.some((line) => line.includes("Activity")));
+  });
+
+  it("shows an empty state and drift lines", () => {
+    const empty = render(state({ jobs: [] }), 60_000, false).join("\n");
+    assert.match(empty, /no jobs in crons\//);
+
+    const drift = render(
+      state({ manifest: "drift", drift: ["+crons/new.ts added"] }),
+      60_000,
+      false,
+    ).join("\n");
+    assert.match(drift, /Drift \(1\)/);
+    assert.match(drift, /\+crons\/new\.ts added/);
+  });
+
+  it("truncates long text with an ellipsis", () => {
+    assert.equal(truncate("abcdef", 4), "abc…");
+    assert.equal(truncate("abc", 4), "abc");
   });
 });
