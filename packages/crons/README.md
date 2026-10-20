@@ -1,10 +1,10 @@
 # `void-crons`
 
-![version](https://img.shields.io/badge/version-0.2.0-blue)
+![version](https://img.shields.io/badge/version-0.3.0-blue)
 ![node](https://img.shields.io/badge/node-%3E%3D22.6-339933?logo=node.js&logoColor=white)
 ![type](https://img.shields.io/badge/module-ESM-yellow)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-64_passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-85_passed-brightgreen)
 ![cron-parser](https://img.shields.io/badge/cron--parser-v5-orange)
 ![react](https://img.shields.io/badge/react-18_%7C_19_optional-61dafb)
 ![platform](https://img.shields.io/badge/platform-cloudflare-F38020?logo=cloudflare&logoColor=white)
@@ -15,8 +15,9 @@
 > directory, this package isn't for you.
 
 Local lifecycle for Void `crons/` — scan, validate, preview, manifest, drift-check,
-catch-up, live scheduling, retries, activity history, and an interactive terminal UI.
-One CLI (`void-crons`), one library, one React panel.
+catch-up, live scheduling, retries, activity history, and an interactive terminal
+UI with a live loop, filtering, and job detail. One CLI (`void-crons`), one
+library, one React panel.
 
 New to Void? Start at [void.cloud](https://void.cloud/) — particularly the
 [jobs guide](https://void.cloud/guide/jobs), which defines the `crons/` contract
@@ -190,22 +191,22 @@ One app, live in the terminal. Countdowns tick every second; manifest state and
 activity refresh after every action.
 
 ```text
- void-crons · api                                      tz local · jsonl · localhost:5173
- 3 jobs · 4 expr · 4 sched                                manifest clean · scan 12:06:34
-────────────────────────────────────────────────────────────────────────────────────────
- ● cleanup          0 2 * * *                    next 14h       last fail 1h
- ● heartbeat        * * * * *                    next <2m       last ok 1m
->● reports          */15 * * * *, 30 9 * * 1     next 8m        last ok 4m
-
-────────────────────────────────────────────────────────────────────────────────────────
+ void-crons · api                                         loop off · tz local · jsonl · localhost:5173
+ 3 jobs · 4 expr · 4 sched · sort next                                  manifest clean · scan 12:49:03
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ ● heartbeat        * * * * *                        next <2m       last ok 1m
+ ● reports          */15 * * * *, 30 9 * * 1         next 11m       last ok 3m
+>● cleanup          0 2 * * *                        next 13h       last fail 1h
+ crons/cleanup.ts · active · 0 2 * * * · defineScheduled · last fail 1h
+──────────────────────────────────────────────────────────────────────────────────────────────────────
  Activity
-  ↳ 12:05 heartbeat * * * * * ok 18ms
-  ↳ 12:02 reports */15 * * * * ok 134ms
-  ↳ 11:05 cleanup 0 2 * * * fail 10000ms
-  ↳ 10:05 heartbeat * * * * * ok 21ms
+  ↳ 12:48 heartbeat * * * * * ok 18ms
+  ↳ 12:45 reports */15 * * * * ok 134ms
+  ↳ 11:48 cleanup 0 2 * * * fail 10000ms
+  ↳ 10:48 heartbeat * * * * * ok 21ms
 
-────────────────────────────────────────────────────────────────────────────────────────
- ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · r refresh · q quit
+──────────────────────────────────────────────────────────────────────────────────────────────────────
+ ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r · q
  status: ready
 ```
 
@@ -216,8 +217,20 @@ activity refresh after every action.
 | `d` | Toggle enabled/disabled for this session |
 | `e` | Emit `void.crons.json` — the only action that persists toggles |
 | `c` | Catch up: fire each expression's most recent due time in the last 24h |
+| `s` | Start/stop the live loop from now (no backfill) |
+| `/` | Filter by name, path, or expression; `enter` applies, `esc` clears |
+| `o` | Cycle sort: next fire → name → status |
+| `v` | Toggle the job detail pane |
 | `r` | Rescan jobs, manifest, drift, and activity |
 | `q` / `Ctrl-C` | Quit and restore the terminal |
+
+The live loop fires due expressions in-process and writes the same activity
+entries as `void-crons schedule`; it starts stopped and never backfills. Toggles
+take effect on the next tick. The TUI also watches `crons/` and
+`void.crons.json` and rescans automatically; `r` remains the manual fallback.
+
+`v` opens a detail pane with the job path, expressions, wrapper, last run, and
+error. `/` filters the visible list without affecting what the live loop fires.
 
 Toggles are session-only until `e`. `ui` is single-app and interactive:
 `--json` and `--all` are rejected, and non-TTY stdin/stdout exits `2`.

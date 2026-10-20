@@ -1,17 +1,17 @@
-## Doing
-
-TUI live ops — spec: `docs/superpowers/specs/crons-tui-live-ops.md`; plan: `docs/superpowers/plans/2026-10-20-void-crons-tui-live-ops.md`.
-
-- [ ] Live schedule loop (`s` start/stop, starts from now, no backfill)
-- [ ] Job detail line under the list + `v` full detail pane
-- [ ] `/` inline filter and `o` sort cycle (next fire / name / status)
-- [ ] `fs.watch` auto-rescan with debounce, preserve filter/toggles/selection
-- [ ] Tests: reducer, render, live-loop tick, watcher debounce, cleanup
-- [ ] README: live-loop keys, filter/sort, detail pane
-
-Constraints: zero new runtime deps, one app, loop starts stopped, loop ticks never overlap, manual actions suppress new loop ticks, terminal always restored.
-
 ## Done
+
+### TUI live ops (0.3.0)
+
+- [x] Live schedule loop, start/stop with `s` (`8615d14`)
+- [x] Job detail line + `v` detail pane (`5cb43d0`)
+- [x] `/` filter and `o` sort cycle (`8615d14`, `5cb43d0`)
+- [x] `fs.watch` auto-rescan with debounce (`986f5aa`)
+- [x] Abortable schedule ticks (`757b8ee`)
+- [x] Runner loop + watcher integration (`4d98e6b`)
+- [x] Tests: model, keys, render, watcher, runner, abort (`4d98e6b`)
+- [x] README live-loop/filter/sort/detail docs, screenshot, `0.3.0`
+
+### TUI (0.2.0)
 
 - [x] Task 1: State model and reducer (`2402570` — `TuiState`, `Msg`, `reduce()`, `createState`)
 - [x] Task 2: Width-safe renderer (`0a337bb` — `src/tui/render.ts`, pure, width-aware, `NO_COLOR` clean)
