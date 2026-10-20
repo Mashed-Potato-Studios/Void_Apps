@@ -95,6 +95,7 @@ export default function WorkflowsPage({
         links={[
           { label: 'Overview', href: '/' },
           { label: 'Workflows', href: '/workflows', active: true },
+          { label: 'Crons', href: '/crons' },
           { label: 'Stats API', href: '/api/stats' },
         ]}
       />

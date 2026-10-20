@@ -6,6 +6,9 @@ node_modules/
 .void/
 dist/
 .output/
+void.crons.activity.json
+void.crons.activity.jsonl
+void.crons.activity.sqlite*
 
 # Turborepo
 .turbo/
