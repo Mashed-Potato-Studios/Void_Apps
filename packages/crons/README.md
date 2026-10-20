@@ -24,10 +24,11 @@ this package implements locally.
 
 ```bash
 npm i -g void-crons
-void-crons check apps/api && void-crons emit apps/api   # CI gate + deploy artifact
-void-crons schedule apps/api --once                      # catch-up missed fires
-void-crons trigger cleanup apps/api                      # fire one job right now
-void-crons ui apps/api                                   # interactive dashboard
+cd apps/api                                              # the app dir: void.json + crons/
+void-crons check && void-crons emit                      # CI gate + deploy artifact
+void-crons schedule --once                               # catch-up missed fires
+void-crons trigger cleanup                               # fire one job right now
+void-crons ui                                            # interactive dashboard
 ```
 
 ## Contents
@@ -82,56 +83,64 @@ crons/
 
 ## Quick start
 
+Every command takes an optional app path — the directory containing `void.json`
+and `crons/`. **Omit it to use the current directory.** The examples below run
+from inside the app directory (replace `apps/api` with your app's path):
+
 ```bash
+cd apps/api
+
 # 1. See what the scanner finds (previews use server-local time by default)
-node packages/crons/bin/void-crons.mjs list apps/api
+void-crons list
 # apps/api: 3 job(s)
 #   ● cleanup    0 2 * * *  next in 18h
 #   ● heartbeat  * * * * *  next in <2m
 #   ● reports    */15 * * * *, 30 9 * * 1  next in 6m
 
 # 2. Gate on it, then freeze the deploy artifact
-node packages/crons/bin/void-crons.mjs check apps/api
+void-crons check
 # apps/api: clean (3 jobs, 4 expr, 4 sched)
-node packages/crons/bin/void-crons.mjs emit apps/api
+void-crons emit
 # emitted apps/api/void.crons.json
 
 # 3. Fire what's due (catch-up for the trailing 24h)
-node packages/crons/bin/void-crons.mjs schedule apps/api --once --origin http://localhost:5173
+void-crons schedule --once --origin http://localhost:5173
 # apps/api: fired cleanup 0 2 * * * (24ms)
 # apps/api: caught up (1 fired, 0 skipped)
 
-# 4. Fire one job on demand, from anywhere
-node packages/crons/bin/void-crons.mjs trigger cleanup apps/api --origin http://localhost:5173
+# 4. Fire one job on demand
+void-crons trigger cleanup --origin http://localhost:5173
 # apps/api: fired cleanup 0 2 * * * (95ms)
 
 # 5. Live loop — fires each expression as its minute passes (Ctrl-C exits 0)
-node packages/crons/bin/void-crons.mjs schedule apps/api --origin http://localhost:5173
+void-crons schedule --origin http://localhost:5173
 # scheduled 4 expressions · origin http://localhost:5173 · next */15 * * * * in 6m
 ```
 
 Disabled-job flow:
 
 ```bash
-node packages/crons/bin/void-crons.mjs schedule apps/api --once
+void-crons schedule --once
 # apps/api: skip job "cleanup" is disabled
 # apps/api: caught up (0 fired, 1 skipped)
 ```
 
 ## CLI reference
 
-Runs per-app (`[app-path]`, default: cwd) or `--all` across `apps/*` (needs `void.json`).
-`trigger` takes the job selector first, then the optional app path.
+Runs per-app. `[app-path]` is the directory containing `void.json` and
+`crons/`; omit it to use cwd. `--all` scans `apps/*` (each needs `void.json`).
+`trigger` is the one exception: the job selector comes first, then the optional
+app path (`void-crons trigger cleanup apps/api`).
 
 | Command | What it does | Non-zero exit |
 |---|---|---|
-| `list [app] [--tz Z]` | Scanned jobs, `next in Xm` previews, activity tail. `--json` adds `nextFireMs` per active job | `1` if any job invalid |
-| `ui [app] [--tz Z] [--store MODE] [--origin URL]` | Interactive TUI: jobs, countdowns, drift, activity; trigger/toggle/emit/catch-up | `2` if not a TTY or `--json`/`--all` used |
-| `check [app]` | Invalid jobs, platform limits, manifest drift (skip drift with `--no-drift`) | `1` problems/drift · `2` tool error |
-| `emit [app]` | Writes `void.crons.json` | `2` on tool error |
-| `schedule [app] --once [--tz Z] [--retries N]` | Fires the most-recent due per expression in the trailing 24h | `1` on fire failures |
-| `schedule [app] [--tz Z] [--retries N]` | Live loop: 30s ticks, each expression fires at most once per matched minute | `2` on bad flags |
-| `trigger <job\|expr> [app] [--retries N]` | Manual fire via `POST /__void/scheduled`. `--cron EXPR` overrides the job's expression | `1` HTTP/unknown job · `2` usage |
+| `list [app-path] [--tz Z]` | Scanned jobs, `next in Xm` previews, activity tail. `--json` adds `nextFireMs` per active job | `1` if any job invalid |
+| `ui [app-path] [--tz Z] [--store MODE] [--origin URL]` | Interactive TUI: jobs, countdowns, drift, activity; trigger/toggle/emit/catch-up | `2` if not a TTY or `--json`/`--all` used |
+| `check [app-path]` | Invalid jobs, platform limits, manifest drift (skip drift with `--no-drift`) | `1` problems/drift · `2` tool error |
+| `emit [app-path]` | Writes `void.crons.json` | `2` on tool error |
+| `schedule [app-path] --once [--tz Z] [--retries N]` | Fires the most-recent due per expression in the trailing 24h | `1` on fire failures |
+| `schedule [app-path] [--tz Z] [--retries N]` | Live loop: 30s ticks, each expression fires at most once per matched minute | `2` on bad flags |
+| `trigger <job\|expr> [app-path] [--retries N]` | Manual fire via `POST /__void/scheduled`. `--cron EXPR` overrides the job's expression | `1` HTTP/unknown job · `2` usage |
 
 Exit codes: `0` clean · `1` drift / invalid / failed fire · `2` tool, usage, or flag error
 (includes unknown `--tz` / `--store`).
@@ -160,9 +169,35 @@ directly (Node type-stripping) with a stderr note — it never silently runs sta
 
 ## TUI
 
+Start it **from the app directory** — the one containing `void.json` and
+`crons/`. No path argument needed; it uses the current directory:
+
+```bash
+cd apps/api
+void-crons ui
+```
+
+Running from somewhere else? Pass the app directory as the one positional
+argument. `ui` is the subcommand; `apps/api` is the path to the app:
+
 ```bash
 void-crons ui apps/api
 ```
+
+Inside this monorepo, use the workspace binary instead of a global install:
+
+```bash
+cd apps/coffee
+pnpm exec void-crons ui
+```
+
+Or from the repo root:
+
+```bash
+pnpm --filter @void-monorepo/coffee exec void-crons ui
+```
+
+It needs a real terminal: stdin and stdout must be TTYs, otherwise it exits `2`.
 
 One app, live in the terminal. Countdowns tick every second; manifest state and
 activity refresh after every action.
