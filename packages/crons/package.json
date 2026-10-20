@@ -3,6 +3,15 @@
   "version": "0.3.0",
   "description": "Cron job scanner, manifest, local trigger, activity store, and dev panel for Void Cloud crons/",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mashed-Potato-Studios/Void_Apps.git",
+    "directory": "packages/crons"
+  },
+  "homepage": "https://github.com/Mashed-Potato-Studios/Void_Apps/tree/main/packages/crons#readme",
+  "bugs": {
+    "url": "https://github.com/Mashed-Potato-Studios/Void_Apps/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.6"

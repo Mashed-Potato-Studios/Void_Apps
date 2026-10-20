@@ -9,10 +9,14 @@
 ![react](https://img.shields.io/badge/react-18_%7C_19_optional-61dafb)
 ![platform](https://img.shields.io/badge/platform-cloudflare-F38020?logo=cloudflare&logoColor=white)
 ![npm](https://img.shields.io/badge/npm-void--crons-CB3837?logo=npm&logoColor=white)
+![repo](https://img.shields.io/badge/repo-GitHub-181717?logo=github)
 
 > **For apps built on [Void Cloud](https://void.cloud/)** — the Vite-based framework
 > for deploying to Cloudflare. If your app doesn't have a `void.json` and a `crons/`
 > directory, this package isn't for you.
+>
+> Source, issues, and releases:
+> [Mashed-Potato-Studios/Void_Apps](https://github.com/Mashed-Potato-Studios/Void_Apps).
 
 Local lifecycle for Void `crons/` — scan, validate, preview, manifest, drift-check,
 catch-up, live scheduling, retries, activity history, and an interactive terminal
