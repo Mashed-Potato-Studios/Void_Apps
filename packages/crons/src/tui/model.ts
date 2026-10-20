@@ -92,8 +92,8 @@ export function activityRowsForHeight(height: number): number {
 
 export function jobRowsForHeight(height: number): number {
   const activity = activityRowsForHeight(height);
-  if (activity === 0) return Math.max(1, height - 6);
-  return Math.max(1, height - 8 - activity);
+  if (activity === 0) return Math.max(1, height - 7);
+  return Math.max(1, height - 9 - activity);
 }
 
 export function createState(input: {

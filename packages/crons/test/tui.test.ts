@@ -813,3 +813,57 @@ describe("tui live-ops keys", () => {
     assert.deepEqual(keys("\u0003", { name: "c", ctrl: true }, true), { type: "quit" });
   });
 });
+
+describe("tui live-ops render", () => {
+  it("shows loop state, sort, and the detail line", () => {
+    let s = state();
+    let text = render(s, 60_000, false).join("\n");
+    assert.match(text, /loop off/);
+    assert.match(text, /sort next/);
+    assert.match(text, /crons\/alpha\.ts/);
+
+    s = reduce(s, { type: "loop-start", nowMs: 60_000 });
+    s = reduce(s, {
+      type: "loop-result",
+      checkpointMs: 61_000,
+      firedMinutes: new Map(),
+      fired: 2,
+    });
+    text = render(s, 62_000, false).join("\n");
+    assert.match(text, /loop LIVE · 2 fired/);
+    assert.match(text, /status: live · 2 fired/);
+  });
+
+  it("renders filter input and the no-match state", () => {
+    let s = state({ selected: 2 });
+    s = reduce(s, { type: "filter-open" });
+    s = reduce(s, { type: "filter-char", char: "z" });
+    s = reduce(s, { type: "filter-char", char: "z" });
+    const text = render(s, 60_000, false).join("\n");
+    assert.match(text, /filter: zz/);
+    assert.match(text, /enter apply/);
+    assert.match(text, /no jobs match "zz"/);
+    assert.match(text, /no job selected/);
+  });
+
+  it("renders the detail pane instead of activity", () => {
+    const s = reduce(state(), { type: "detail-toggle" });
+    const text = render(s, 60_000, false).join("\n");
+    assert.match(text, /Detail · v close/);
+    assert.match(text, /path: crons\/alpha\.ts/);
+    assert.match(text, /expressions: \* \* \* \* \*/);
+    assert.ok(!text.includes(" Activity"));
+  });
+
+  it("keeps the detail line inside narrow widths", () => {
+    for (const [width, height] of [
+      [88, 17],
+      [39, 13],
+    ] as const) {
+      const lines = render(state({ width, height }), 60_000, false);
+      assert.equal(lines.length, height);
+      assert.ok(lines.every((line) => [...line].length <= width));
+      assert.ok(lines.some((line) => line.includes("crons/alpha.ts")));
+    }
+  });
+});
