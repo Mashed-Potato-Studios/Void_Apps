@@ -791,3 +791,25 @@ describe("tui live-ops model", () => {
     assert.equal(nextActiveFireMs(withFires), 2_000);
   });
 });
+
+import { keyToMsg as keys } from "../src/tui/keys.ts";
+
+describe("tui live-ops keys", () => {
+  it("maps new normal-mode keys", () => {
+    assert.deepEqual(keys("s", { name: "s" }), { type: "loop-toggle" });
+    assert.deepEqual(keys("/", { name: "/" }), { type: "filter-open" });
+    assert.deepEqual(keys("o", { name: "o" }), { type: "sort-cycle" });
+    assert.deepEqual(keys("v", { name: "v" }), { type: "detail-toggle" });
+    assert.deepEqual(keys(undefined, { name: "escape" }), { type: "escape" });
+  });
+
+  it("captures text while filtering", () => {
+    assert.deepEqual(keys("a", { name: "a" }, true), { type: "filter-char", char: "a" });
+    assert.deepEqual(keys(" ", { name: "space" }, true), { type: "filter-char", char: " " });
+    assert.deepEqual(keys(undefined, { name: "backspace" }, true), { type: "filter-backspace" });
+    assert.deepEqual(keys("\r", { name: "return" }, true), { type: "filter-apply" });
+    assert.deepEqual(keys(undefined, { name: "escape" }, true), { type: "filter-clear" });
+    assert.deepEqual(keys(undefined, { name: "up" }, true), null);
+    assert.deepEqual(keys("\u0003", { name: "c", ctrl: true }, true), { type: "quit" });
+  });
+});
