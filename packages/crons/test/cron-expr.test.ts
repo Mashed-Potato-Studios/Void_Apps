@@ -103,13 +103,14 @@ describe("preview support", () => {
     assert.equal(isPreviewSupported("0 18 * * 6L"), true);
     assert.equal(isPreviewSupported("0 9 * * 2#2"), true);
     assert.equal(isPreviewSupported("0 0 L * *"), true);
-    // Valid on Cloudflare, but cron-parser cannot evaluate them.
-    assert.equal(isPreviewSupported("59 23 LW * *"), false);
-    assert.equal(isPreviewSupported("0 0 15W * *"), false);
-    assert.equal(isPreviewSupported("0 0 L-3 * *"), false);
+    // Valid on Cloudflare and handled by the Quartz fallback evaluator.
+    assert.equal(isPreviewSupported("59 23 LW * *"), true);
+    assert.equal(isPreviewSupported("0 0 15W * *"), true);
+    assert.equal(isPreviewSupported("0 0 L-3 * *"), true);
+    // cron-parser still cannot parse them; the fallback does.
     assert.equal(cronParserInput("59 23 LW * *"), null);
     assert.equal(allPreviewSupported(["0 3 * * *", "15 * * * *"]), true);
-    assert.equal(allPreviewSupported(["0 3 * * *", "59 23 LW * *"]), false);
+    assert.equal(allPreviewSupported(["0 3 * * *", "59 23 LW * *"]), true);
   });
 });
 
@@ -128,10 +129,46 @@ describe("computeDue Cloudflare semantics", () => {
     assert.equal(new Date(due[0]!.dueMs).toISOString(), "2026-01-05T09:00:00.000Z");
   });
 
-  it("returns no preview for valid-but-unparseable expressions instead of throwing", () => {
-    const from = Date.UTC(2026, 0, 1);
-    assert.doesNotThrow(() => computeDue(["59 23 LW * *"], from, from + 365 * 24 * 3600_000));
-    assert.deepEqual(computeDue(["59 23 LW * *"], from, from + 365 * 24 * 3600_000), []);
+  it("evaluates Quartz day-of-month forms the parser cannot handle", () => {
+    const from = Date.UTC(2026, 9, 1); // 2026-10-01
+    const to = Date.UTC(2026, 10, 1); // 2026-11-01
+
+    // October 31 is a Saturday, so the last weekday is Friday the 30th.
+    assert.equal(
+      new Date(computeDue(["59 23 LW * *"], from, to)[0]!.dueMs).toISOString(),
+      "2026-10-30T23:59:00.000Z",
+    );
+    // Three days before the 31st.
+    assert.equal(
+      new Date(computeDue(["0 0 L-3 * *"], from, to)[0]!.dueMs).toISOString(),
+      "2026-10-28T00:00:00.000Z",
+    );
+
+    // November 15 is a Sunday, so 15W resolves to Monday the 16th.
+    const novFrom = Date.UTC(2026, 10, 1);
+    const novTo = Date.UTC(2026, 11, 1);
+    assert.equal(
+      new Date(computeDue(["0 0 15W * *"], novFrom, novTo)[0]!.dueMs).toISOString(),
+      "2026-11-16T00:00:00.000Z",
+    );
+
+    // August 1 is a Saturday, so 1W resolves to Monday the 3rd.
+    const augFrom = Date.UTC(2026, 7, 1);
+    const augTo = Date.UTC(2026, 8, 1);
+    assert.equal(
+      new Date(computeDue(["0 0 1W * *"], augFrom, augTo)[0]!.dueMs).toISOString(),
+      "2026-08-03T00:00:00.000Z",
+    );
+  });
+
+  it("evaluates extended forms in an explicit timezone", () => {
+    const from = Date.UTC(2026, 9, 1);
+    const to = Date.UTC(2026, 10, 1);
+    // 23:59 in Tokyo on the last weekday is 14:59 UTC.
+    assert.equal(
+      new Date(computeDue(["59 23 LW * *"], from, to, { tz: "Asia/Tokyo" })[0]!.dueMs).toISOString(),
+      "2026-10-30T14:59:00.000Z",
+    );
   });
 });
 

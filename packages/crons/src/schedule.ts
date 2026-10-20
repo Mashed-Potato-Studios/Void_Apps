@@ -1,5 +1,5 @@
 import { CronExpressionParser } from "cron-parser";
-import { cronParserInput } from "./cron-expr.js";
+import { cronParserInput, extendedDueTimes } from "./cron-expr.js";
 import type { CronJob } from "./types.js";
 import { scanCronFiles } from "./scan.js";
 import { appendActivityLog, type ActivityStoreMode } from "./store.js";
@@ -32,7 +32,11 @@ export function computeDue(expressions: string[], fromMs: number, toMs: number, 
   const out: CronDue[] = [];
   for (const expr of [...new Set(expressions)]) {
     const input = cronParserInput(expr);
-    if (input === null) continue;
+    if (input === null) {
+      // Valid Cloudflare forms cron-parser cannot evaluate (LW, 15W, L-3).
+      for (const dueMs of extendedDueTimes(expr, fromMs, toMs, opts)) out.push({ expr, dueMs });
+      continue;
+    }
     let parsed;
     try {
       parsed = CronExpressionParser.parse(input, { currentDate: new Date(fromMs), tz });

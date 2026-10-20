@@ -281,30 +281,48 @@ const x = { defineScheduled() {} };                    // ❌ method shorthand
 
 ## Validation
 
-Shape first (5 fields), then real range checks through `cron-parser` —
-Cloudflare-compatible, including DOW names:
+Expressions are checked against Cloudflare's Cron Trigger grammar, not just
+`cron-parser`'s dialect:
+
+- five fields; day-of-week is Quartz-numbered (**`1` = Sunday … `7` = Saturday**),
+- `L`, `LW`, `<n>W`, `L-<n>`, `<n>L`, `<n>#<k>` and `?`,
+- month names (`JAN-DEC`) and day names (`SUN-SAT`).
 
 | Expression | Result |
 |---|---|
 | `0 2 * * *` | ✅ |
-| `0 9 * * MON` | ✅ DOW names accepted |
-| `99 99 99 99 99` | ❌ `invalid cron expression … got value 99 expected range 0-59` |
+| `0 9 * * MON` | ✅ day names |
+| `0 18 * * 6L` | ✅ last Friday (`6` = Friday) |
+| `0 9 * * 2#2` | ✅ second Monday |
+| `59 23 LW * *` | ✅ last weekday of the month |
+| `0 0 15W * *` | ✅ nearest weekday to the 15th |
+| `0 0 L-3 * *` | ✅ three days before month end |
+| `* * * * 0` | ❌ Cloudflare day-of-week starts at `1` |
+| `99 99 99 99 99` | ❌ out of range |
 | `0 0 1 13 *` | ❌ month 13 out of range |
-| `*/0 * * * *` | ❌ cannot repeat at every 0 |
-| `0 0 29 2 *` | ⚠️ parses (leap dates exist) but fires only in leap years |
+| `*/0 * * * *` | ❌ step must be at least 1 |
 
-Impossible-but-parseable dates (Feb 30) never throw — they simply never come due,
-so `list` shows `never` and the scheduler skips them.
+Everything Cloudflare accepts is previewable locally. Forms `cron-parser`
+cannot evaluate (`LW`, `15W`, `L-3`) run through a built-in Quartz evaluator, so
+`list`, `schedule --once`, and the live loop all fire on the same day
+Cloudflare will. Impossible dates (Feb 30) never throw — they simply never come
+due.
 
 ## Timezones
 
-Cron has no zone field, so the CLI interprets expressions in one zone per run:
+Cloudflare evaluates Cron Triggers in **UTC**, so previews and the local
+scheduler default to UTC — no flag needed:
 
 ```bash
-void-crons list path/to/your-app --tz UTC
-#   ● nine  0 9 * * *  next in 20h
+void-crons list path/to/your-app
+#   ● nine  0 9 * * *  next in 20h        (09:00 UTC)
+```
+
+`--tz` previews another wall clock deliberately:
+
+```bash
 void-crons list path/to/your-app --tz America/New_York
-#   ● nine  0 9 * * *  next in 24h
+#   ● nine  0 9 * * *  next in 24h        (09:00 New York)
 void-crons list path/to/your-app --tz Pacific/Kiritimati
 #   ● nine  0 9 * * *  next in 6h
 ```
@@ -361,6 +379,13 @@ own `disabled` list). Suggested CI:
 void-crons check path/to/your-app --ci   # exit 1 on invalid jobs, limit overflow, or drift
 ```
 
+The manifest also carries a `schedules` array — one `{ name, cron }` entry per
+active expression, named by the file's path inside `crons/`
+(`crons/billing/daily.ts` → `billing/daily`). That is the same shape
+`void deploy` publishes, so the committed artifact can be compared with a real
+deployment; shared expressions still count once toward the 100-expression
+limit.
+
 ## Activity history
 
 `trigger`, `schedule --once`, and the live loop record every outcome to
@@ -392,8 +417,11 @@ readActivityLog(appRoot, 5, "jsonl");       // legacy backend
 ```ts
 import {
   scanCronFiles,      // CronJob[] — parse + validate crons/ (opts.disabled)
-  isCronExpression,   // boolean — shape + cron-parser range check
-  buildCronManifest,  // counts, disabled list, invalid list
+  isCronExpression,   // boolean — Cloudflare grammar (Quartz DOW, L/W/#/?)
+  validateCloudflareCron, // string | null — grammar problem for an expression
+  cfCronToUnix,       // string — Quartz DOW → cron-parser DOW
+  isPreviewSupported, // boolean — next-fire/catch-up can be computed locally
+  buildCronManifest,  // counts, schedules[], disabled list, invalid list
   emitCronManifest,   // write void.crons.json → { manifest, path }
   readCronManifest,   // stored manifest or null
   detectDrift,        // string[] — added/removed/changed lines
@@ -457,15 +485,15 @@ try {
 |---|---|---|
 | `missing export const cron` | No literal export (dynamic value, typo, `_`-ignored file) | Export a string/array literal |
 | `unsupported cron export` | `cron` bound to a variable/call | Use a literal or array of literals |
-| `invalid cron expression … 0-59` | Out-of-range field | Check field ranges (`cron-parser` message names the bound) |
-| `unsupported cron expression … 5-field` | Wrong field count / bad chars | Five fields, `* , - /` + digits/names |
+| `invalid cron expression … 0-59` | Out-of-range field | Check field ranges (the message names the bound) |
+| `unsupported cron expression … 5-field` | Wrong field count | Five fields: `* , - /` + digits/names, plus `L W # ?` |
 | `unknown timezone "Foo/Bar"` exit 2 | Bad `--tz` | IANA name, e.g. `America/New_York` |
 | `unknown store "bogus"` exit 2 | Bad `--store` | `sqlite` or `jsonl` |
 | `no job "x" … not a 5-field cron expression` | Typo'd selector | `trigger <job\|expr> [app-path]` — app path goes *after* the selector |
 | `failed … (attempts 4)` | Server failing after retries | Check server logs; 4xx never retry |
 | `database is locked` (rare burst) | >WAL writer collision | Retried automatically via busy-timeout; rerun if it escapes |
 | `no defineScheduled` badge | Handler not wrapped | `export default defineScheduled(…)` |
-| `never` in `list` | Nothing due in 8 days (yearly, Feb 30) | Expected — not an error |
+| `never` in `list` | Nothing due in the 40-day preview horizon (yearly, Feb 30) | Expected — not an error |
 | `dist is stale` stderr note | Edited `src/` without building | `pnpm build` (bin falls back to `src/` meanwhile) |
 
 ## Known limits
