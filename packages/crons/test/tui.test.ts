@@ -722,7 +722,7 @@ describe("tui live-ops model", () => {
 
     const loaded = reduce(s, {
       type: "loaded",
-      snapshot: snapshot([job("gamma"), job("beta"), job("alpha")]),
+      snapshot: snapshot([job("aardvark"), job("gamma"), job("beta"), job("alpha")]),
     });
     assert.equal(selectedJob(loaded)?.name, "beta");
   });
@@ -1160,6 +1160,111 @@ describe("tui live-ops runner", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.equal(loads, 2);
 
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+});
+
+describe("tui live-ops race fixes", () => {
+  const firedEntry = {
+    id: "x",
+    jobName: "alpha",
+    cron: "* * * * *",
+    scheduledTime: new Date(0).toISOString(),
+    finishedAt: new Date(0).toISOString(),
+    durationMs: 1,
+    status: "success" as const,
+    source: "local" as const,
+  };
+
+  it("discards a tick that resolves after stop then restart", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let finish: (() => void) | undefined;
+    const tickImpl: typeof tickSchedule = (_state, _targets, opts) =>
+      new Promise((resolve) => {
+        finish = () =>
+          resolve({
+            state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+            fired: [firedEntry],
+            skipped: [],
+          });
+      });
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    input.press("s", { name: "s" });
+    input.press("s", { name: "s" });
+    finish?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const frame = output.chunks.at(-1) ?? "";
+    assert.match(frame, /loop LIVE · 0 fired/);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("advances the checkpoint with zero active targets", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let current = 0;
+    let checkpoint: number | undefined;
+    const tickImpl: typeof tickSchedule = async (state, _targets, opts) => {
+      checkpoint = state.checkpointMs;
+      return {
+        state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+        fired: [],
+        skipped: [],
+      };
+    };
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => current,
+        actions: fakeActions({ load: () => snapshot([job("alpha")]) }),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("d", { name: "d" });
+    input.press("s", { name: "s" });
+    current = 300_000;
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    input.press("d", { name: "d" });
+    current = 300_001;
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(checkpoint, 300_000);
     input.press("q", { name: "q" });
     assert.equal(await promise, 0);
   });

@@ -177,6 +177,7 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
     let aborter: AbortController | null = null;
     let loopAborter: AbortController | null = null;
     let loopTickInFlight = false;
+    let loopGeneration = 0;
     let watcher: WatcherHandle | null = null;
     let watchDirty = false;
     let timer: unknown;
@@ -240,8 +241,18 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
     const runLoopTick = async (): Promise<void> => {
       if (!state.loop.running || busy || loopTickInFlight || settled) return;
       const active = activeTargets(state);
-      if (active.size === 0) return;
+      if (active.size === 0) {
+        state = reduce(state, {
+          type: "loop-result",
+          checkpointMs: now(),
+          firedMinutes: new Map(state.loop.firedMinutes),
+          fired: 0,
+        });
+        draw();
+        return;
+      }
 
+      const generation = loopGeneration;
       loopTickInFlight = true;
       const controller = new AbortController();
       loopAborter = controller;
@@ -264,7 +275,7 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
             signal: controller.signal,
           },
         );
-        if (settled || !state.loop.running) return;
+        if (settled || !state.loop.running || generation !== loopGeneration) return;
         state = reduce(state, {
           type: "loop-result",
           checkpointMs: result.state.checkpointMs,
@@ -279,7 +290,7 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
         }
         draw();
       } catch (error) {
-        if (settled || controller.signal.aborted) return;
+        if (settled || controller.signal.aborted || generation !== loopGeneration) return;
         state = reduce(state, {
           type: "loop-error",
           message: error instanceof Error ? error.message : String(error),
@@ -373,6 +384,7 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       }
       if (busy) return;
       if (msg.type === "loop-toggle") {
+        loopGeneration++;
         if (state.loop.running) {
           loopAborter?.abort();
           state = reduce(state, { type: "loop-stop" });
