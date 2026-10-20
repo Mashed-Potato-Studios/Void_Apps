@@ -387,6 +387,7 @@ describe("tui runner", () => {
         stdout: output as never,
         stderr: { write: (line: string) => errors.push(line) },
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
       },
     );
     assert.equal(code, 2);
@@ -411,6 +412,7 @@ describe("tui runner", () => {
         stdout: output as never,
         stderr: { write: (line: string) => errors.push(line) },
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -433,6 +435,7 @@ describe("tui runner", () => {
         stdout: output as never,
         stderr: { write: (line: string) => errors.push(line) },
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -454,6 +457,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -488,6 +492,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -520,6 +525,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -545,6 +551,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -972,5 +979,188 @@ describe("tui watcher", () => {
     });
     assert.equal(failed.failed, true);
     failed.close();
+  });
+});
+
+import type { WatcherHandle } from "../src/tui/watch.ts";
+
+describe("tui live-ops runner", () => {
+  it("starts and stops the loop on s", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let ticks = 0;
+    const tickImpl: typeof tickSchedule = async (_state, _targets, opts) => {
+      ticks++;
+      return {
+        state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+        fired: [],
+        skipped: [],
+      };
+    };
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 1);
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 1);
+
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("suppresses loop ticks while a manual action is busy", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let ticks = 0;
+    let finish: (() => void) | undefined;
+    const tickImpl: typeof tickSchedule = async (_state, _targets, opts) => {
+      ticks++;
+      return {
+        state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+        fired: [],
+        skipped: [],
+      };
+    };
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          trigger: async () => {
+            await new Promise<void>((resolve) => {
+              finish = resolve;
+            });
+            return [];
+          },
+        }),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    input.press("\r", { name: "return" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 0);
+
+    finish?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 1);
+
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("aborts an in-flight loop tick on quit", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let seenSignal: AbortSignal | undefined;
+    const tickImpl: typeof tickSchedule = (_state, _targets, opts) =>
+      new Promise((resolve) => {
+        seenSignal = opts.signal;
+        void resolve;
+      });
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(seenSignal?.aborted, false);
+
+    input.press("q", { name: "q" });
+    assert.equal(seenSignal?.aborted, true);
+    assert.equal(await promise, 0);
+  });
+
+  it("refreshes when the watcher reports a change", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let fire: (() => void) | undefined;
+    let loads = 0;
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          load: () => {
+            loads++;
+            return snapshot();
+          },
+        }),
+        watch: (_appPath, onChange): WatcherHandle => {
+          fire = onChange;
+          return { close() {}, failed: false };
+        },
+      },
+    );
+
+    assert.equal(loads, 1);
+    fire?.();
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(loads, 2);
+
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
   });
 });
