@@ -71,6 +71,8 @@ export interface CronTriggerOptions {
   retryBaseMs?: number;
   /** Override the sleep between retries (tests). */
   sleepImpl?: (ms: number) => Promise<void>;
+  /** Abort in-flight attempts (TUI quit). Aborting never retries. */
+  signal?: AbortSignal;
 }
 
 export interface CronTriggerResult {

@@ -95,6 +95,7 @@ export interface ScheduleOptions extends CronScheduleZone {
   timeoutMs?: number;
   maxAttempts?: number;
   store?: ActivityStoreMode;
+  signal?: AbortSignal;
 }
 
 /** Throw on unknown IANA zone; cron-parser surfaces bad zones as opaque date errors. */
@@ -133,6 +134,7 @@ export async function runScheduleOnce(appRoot: string, opts: ScheduleOptions): P
       scheduledTime: dueMs,
       timeoutMs: opts.timeoutMs,
       maxAttempts: opts.maxAttempts,
+      signal: opts.signal,
     });
     if (res.entry) fired.push(res.entry);
     else if (res.reason) skipped.push({ cron: expr, jobName: active.get(expr)!, reason: res.reason });

@@ -51,8 +51,9 @@ async function postOnce(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const signal = opts.signal ? AbortSignal.any([controller.signal, opts.signal]) : controller.signal;
   try {
-    const res = (await fetchImpl(url, { method: "POST", ...init, signal: controller.signal })) as unknown as {
+    const res = (await fetchImpl(url, { method: "POST", ...init, signal })) as unknown as {
       ok: boolean;
       status: number;
     };
@@ -85,6 +86,15 @@ export async function triggerExpression(
   let attempt = 0;
   let lastError: string | undefined;
   for (;;) {
+    if (opts.signal?.aborted) {
+      return {
+        ok: false,
+        entry: mkEntry(opts, jobName, expression, scheduledTime, startedAt, "failed", "aborted"),
+        httpStatus: 0,
+        attempts: Math.max(1, attempt),
+        retried: false,
+      };
+    }
     attempt++;
     try {
       const res = await postOnce(url, { headers, body }, opts);
@@ -119,6 +129,15 @@ export async function triggerExpression(
           retried: attempt > 1,
         };
       }
+    }
+    if (opts.signal?.aborted) {
+      return {
+        ok: false,
+        entry: mkEntry(opts, jobName, expression, scheduledTime, startedAt, "failed", "aborted"),
+        httpStatus: 0,
+        attempts: attempt,
+        retried: attempt > 1,
+      };
     }
     await sleep(retryBaseMs * 2 ** (attempt - 1));
   }

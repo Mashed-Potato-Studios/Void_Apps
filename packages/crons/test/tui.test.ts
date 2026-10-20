@@ -260,3 +260,27 @@ describe("tui keys", () => {
     assert.equal(keyToMsg("x", { name: "x" }), null);
   });
 });
+
+import { triggerExpression } from "../src/trigger.ts";
+
+describe("trigger abort", () => {
+  it("stops before fetching when the caller signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let fetches = 0;
+    const result = await triggerExpression("* * * * *", "alpha", {
+      origin: "http://localhost:5173",
+      signal: controller.signal,
+      fetchImpl: (async () => {
+        fetches++;
+        return { ok: true, status: 200 } as Response;
+      }) as typeof fetch,
+    });
+    assert.equal(fetches, 0);
+    assert.equal(result.ok, false);
+    assert.equal(result.httpStatus, 0);
+    assert.equal(result.attempts, 1);
+    assert.equal(result.entry?.status, "failed");
+    assert.match(result.entry?.error ?? "", /aborted/);
+  });
+});
