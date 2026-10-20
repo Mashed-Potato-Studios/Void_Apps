@@ -165,9 +165,9 @@ function keysLine(state: TuiState, width: number): string {
     return truncate(` filter: ${state.filter}  · enter apply · esc clear`, width);
   }
   const full = " ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r refresh · q quit";
-  const mid = " ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · v detail · q quit";
+  const mid = " ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r · q";
   const small = " ↑↓ move · ↵ · d e c s / o v r q";
-  return truncate(width >= 100 ? full : width >= 64 ? mid : small, width);
+  return truncate(width >= 112 ? full : width >= 64 ? mid : small, width);
 }
 
 function statusLine(state: TuiState, width: number, nowMs: number): string {
