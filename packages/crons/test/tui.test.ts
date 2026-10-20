@@ -647,3 +647,147 @@ describe("ui command", () => {
     }
   });
 });
+
+import {
+  nextActiveFireMs,
+  selectedJob,
+  visibleJobs,
+} from "../src/tui/model.ts";
+
+describe("tui live-ops model", () => {
+  it("filters by name, path, or expression", () => {
+    const s = state({
+      jobs: [job("alpha"), job("beta", "active", ["*/15 * * * *"]), job("gamma")],
+      filter: "*/15",
+    });
+    assert.deepEqual(visibleJobs(s).map((j) => j.name), ["beta"]);
+
+    assert.deepEqual(
+      visibleJobs({ ...s, filter: "crons/gamma" }).map((j) => j.name),
+      ["gamma"],
+    );
+    assert.deepEqual(
+      visibleJobs({ ...s, filter: "ALP" }).map((j) => j.name),
+      ["alpha"],
+    );
+  });
+
+  it("sorts by next fire, name, and status", () => {
+    const jobs = [
+      { ...job("zeta"), nextFireMs: 300 },
+      { ...job("alpha"), nextFireMs: 100 },
+      { ...job("beta", "disabled"), nextFireMs: null },
+      { ...job("broken", "invalid"), nextFireMs: null },
+    ];
+    assert.deepEqual(
+      visibleJobs(state({ jobs, sort: "next" })).map((j) => j.name),
+      ["alpha", "zeta", "beta", "broken"],
+    );
+    assert.deepEqual(
+      visibleJobs(state({ jobs, sort: "name" })).map((j) => j.name),
+      ["alpha", "beta", "broken", "zeta"],
+    );
+    assert.deepEqual(
+      visibleJobs(state({ jobs, sort: "status" })).map((j) => j.name),
+      ["alpha", "zeta", "beta", "broken"],
+    );
+  });
+
+  it("targets the visible selection, not the raw index", () => {
+    const s = state({
+      jobs: [job("alpha"), job("beta"), job("gamma")],
+      filter: "gamma",
+    });
+    const selected = selectedJob(s);
+    assert.equal(selected?.name, "gamma");
+
+    const after = reduce(s, { type: "toggle" });
+    assert.equal(after.jobs.find((j) => j.name === "gamma")?.status, "disabled");
+    assert.equal(after.jobs.find((j) => j.name === "alpha")?.status, "active");
+  });
+
+  it("preserves the selected job by path across loaded snapshots", () => {
+    const s = state({
+      jobs: [job("alpha"), job("beta"), job("gamma")],
+      selected: 1,
+    });
+    assert.equal(selectedJob(s)?.name, "beta");
+
+    const loaded = reduce(s, {
+      type: "loaded",
+      snapshot: snapshot([job("gamma"), job("beta"), job("alpha")]),
+    });
+    assert.equal(selectedJob(loaded)?.name, "beta");
+  });
+
+  it("tracks loop start, results, and stop", () => {
+    let s = state();
+    s = reduce(s, { type: "loop-start", nowMs: 1_000 });
+    assert.equal(s.loop.running, true);
+    assert.equal(s.loop.checkpointMs, 1_000);
+
+    s = reduce(s, {
+      type: "loop-result",
+      checkpointMs: 61_000,
+      firedMinutes: new Map([["* * * * *", 1]]),
+      fired: 2,
+    });
+    assert.equal(s.loop.checkpointMs, 61_000);
+    assert.equal(s.loop.firedTotal, 2);
+
+    s = reduce(s, { type: "loop-error", message: "boom" });
+    assert.equal(s.loop.running, false);
+    assert.equal(s.status?.kind, "error");
+
+    s = reduce(s, { type: "loop-start", nowMs: 10_000 });
+    s = reduce(s, { type: "loop-stop" });
+    assert.equal(s.loop.running, false);
+    assert.equal(s.loop.firedTotal, 0);
+  });
+
+  it("edits, applies, and clears the filter", () => {
+    let s = state({ selected: 2 });
+    s = reduce(s, { type: "filter-open" });
+    assert.equal(s.filterInput, true);
+
+    s = reduce(s, { type: "filter-char", char: "b" });
+    s = reduce(s, { type: "filter-char", char: "e" });
+    assert.equal(s.filter, "be");
+    assert.equal(s.selected, 0);
+
+    s = reduce(s, { type: "filter-backspace" });
+    assert.equal(s.filter, "b");
+
+    s = reduce(s, { type: "filter-apply" });
+    assert.equal(s.filterInput, false);
+    assert.equal(s.filter, "b");
+
+    s = reduce(s, { type: "filter-clear" });
+    assert.equal(s.filter, "");
+    assert.equal(s.selected, 0);
+  });
+
+  it("cycles sort, toggles detail, and computes the next active fire", () => {
+    let s = state({ sort: "next" });
+    s = reduce(s, { type: "sort-cycle" });
+    assert.equal(s.sort, "name");
+    s = reduce(s, { type: "sort-cycle" });
+    assert.equal(s.sort, "status");
+    s = reduce(s, { type: "sort-cycle" });
+    assert.equal(s.sort, "next");
+
+    s = reduce(s, { type: "detail-toggle" });
+    assert.equal(s.detail, true);
+    s = reduce(s, { type: "escape" });
+    assert.equal(s.detail, false);
+
+    const withFires = state({
+      jobs: [
+        { ...job("a"), nextFireMs: 5_000 },
+        { ...job("b"), nextFireMs: 2_000 },
+        job("c", "disabled"),
+      ],
+    });
+    assert.equal(nextActiveFireMs(withFires), 2_000);
+  });
+});
