@@ -16,6 +16,7 @@
     "./scan": "./src/scan.ts",
     "./manifest": "./src/manifest.ts",
     "./cli": "./src/cli.ts",
+    "./tui": "./src/tui/run.ts",
     "./package.json": "./package.json"
   },
   "bin": {
@@ -44,6 +45,7 @@
       "./manifest": "./dist/manifest.js",
       "./schedule": "./dist/schedule.js",
       "./cli": "./dist/cli.js",
+      "./tui": "./dist/tui/run.js",
       "./package.json": "./package.json"
     }
   },

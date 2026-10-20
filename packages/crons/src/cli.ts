@@ -6,11 +6,13 @@ import type { CronActivityEntry } from "./types.js";
 import { computeDue, isValidTimezone, runScheduleOnce, startScheduleLoop } from "./schedule.js";
 import { triggerExpression, triggerJob } from "./trigger.js";
 import { isCronExpression, scanCronFiles } from "./scan.js";
+import { startTui, type TuiOptions } from "./tui/run.js";
 
 const USAGE = [
-  "usage: void-crons <list|check|emit|trigger|schedule> [app-path] [options]",
+  "usage: void-crons <list|check|emit|trigger|schedule|ui> [app-path] [options]",
   "",
   "  list [app-path] [--json] [--all] [--tz ZONE]  scanned jobs + manifest state",
+  "  ui [app-path] [--tz ZONE] [--store sqlite|jsonl] [--origin URL] [--token T] [--retries N] [--timeout MS]  interactive dashboard + actions",
   "  check [app-path] [--all]                      fail (1) on invalid jobs or limit overflow",
   "  emit [app-path]                               write void.crons.json",
   "  trigger <job|expr> [app-path] [--origin URL] [--cron EXPR] [--token T] [--retries N] [--timeout MS] [--all]",
@@ -51,7 +53,11 @@ function resolveApps(cwd: string, all: boolean, positional?: string): string[] {
     .sort();
 }
 
-export async function run(argv: string[], cwd: string): Promise<number> {
+export async function run(
+  argv: string[],
+  cwd: string,
+  ui: (opts: TuiOptions) => Promise<number> = startTui,
+): Promise<number> {
   const args = [...argv];
   const flags = new Set<string>();
   const positionals: string[] = [];
@@ -105,6 +111,11 @@ export async function run(argv: string[], cwd: string): Promise<number> {
   const json = flags.has("--json");
   const ci = flags.has("--ci");
 
+  if (cmd === "ui" && (all || json)) {
+    console.log("error: ui is single-app and interactive — --json/--all are not supported");
+    return 2;
+  }
+
   let apps: string[];
   try {
     apps = resolveApps(cwd, all, target);
@@ -122,6 +133,24 @@ export async function run(argv: string[], cwd: string): Promise<number> {
     return 2;
   }
   switch (cmd) {
+    case "ui": {
+      const app = apps[0];
+      if (!app) {
+        console.log("error: ui needs one app path");
+        return 2;
+      }
+      return ui({
+        appPath: app,
+        origin,
+        ...(tz ? { tz } : {}),
+        storeMode,
+        ...(token ?? process.env["VOID_DEV_TRIGGER"]
+          ? { devToken: token ?? process.env["VOID_DEV_TRIGGER"] }
+          : {}),
+        retries,
+        timeoutMs,
+      });
+    }
     case "list": {
       let code = 0;
       for (const app of apps) {

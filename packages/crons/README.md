@@ -124,6 +124,7 @@ Runs per-app (`[app-path]`, default: cwd) or `--all` across `apps/*` (needs `voi
 | Command | What it does | Non-zero exit |
 |---|---|---|
 | `list [app] [--tz Z]` | Scanned jobs, `next in Xm` previews, activity tail. `--json` adds `nextFireMs` per active job | `1` if any job invalid |
+| `ui [app] [--tz Z] [--store MODE] [--origin URL]` | Interactive TUI: jobs, countdowns, drift, activity; trigger/toggle/emit/catch-up | `2` if not a TTY or `--json`/`--all` used |
 | `check [app]` | Invalid jobs, platform limits, manifest drift (skip drift with `--no-drift`) | `1` problems/drift · `2` tool error |
 | `emit [app]` | Writes `void.crons.json` | `2` on tool error |
 | `schedule [app] --once [--tz Z] [--retries N]` | Fires the most-recent due per expression in the trailing 24h | `1` on fire failures |
@@ -154,6 +155,28 @@ Exit codes: `0` clean · `1` drift / invalid / failed fire · `2` tool, usage, o
 
 The binary runs `dist/` when it's newer than `src/`, otherwise executes `src/`
 directly (Node type-stripping) with a stderr note — it never silently runs stale output.
+
+## TUI
+
+```bash
+void-crons ui apps/api
+```
+
+One app, live in the terminal. Countdowns tick every second; manifest state and
+activity refresh after every action.
+
+| Key | Action |
+|---|---|
+| `↑` / `↓`, `j` / `k` | Move selection |
+| `enter` | Trigger the selected job (all its expressions) |
+| `d` | Toggle enabled/disabled for this session |
+| `e` | Emit `void.crons.json` — the only action that persists toggles |
+| `c` | Catch up: fire each expression's most recent due time in the last 24h |
+| `r` | Rescan jobs, manifest, drift, and activity |
+| `q` / `Ctrl-C` | Quit and restore the terminal |
+
+Toggles are session-only until `e`. `ui` is single-app and interactive:
+`--json` and `--all` are rejected, and non-TTY stdin/stdout exits `2`.
 
 ## Job files in depth
 

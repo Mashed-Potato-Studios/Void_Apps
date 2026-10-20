@@ -500,3 +500,45 @@ describe("tui runner", () => {
     assert.ok(output.chunks.at(-1)?.includes("\u001b[?1049l"));
   });
 });
+
+import { run } from "../src/cli.ts";
+import type { TuiOptions } from "../src/tui/run.ts";
+
+describe("ui command", () => {
+  it("passes app and flag options to the TUI runner", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    try {
+      const calls: TuiOptions[] = [];
+      const fake = async (opts: TuiOptions): Promise<number> => {
+        calls.push(opts);
+        return 0;
+      };
+      const code = await run(
+        ["ui", app, "--tz", "UTC", "--store", "jsonl", "--origin", "http://localhost:9999", "--retries", "2", "--timeout", "500"],
+        process.cwd(),
+        fake,
+      );
+      assert.equal(code, 0);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0]?.appPath, app);
+      assert.equal(calls[0]?.tz, "UTC");
+      assert.equal(calls[0]?.storeMode, "jsonl");
+      assert.equal(calls[0]?.origin, "http://localhost:9999");
+      assert.equal(calls[0]?.retries, 2);
+      assert.equal(calls[0]?.timeoutMs, 500);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects --json and --all for the interactive UI", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    try {
+      const fake = async (): Promise<number> => 0;
+      assert.equal(await run(["ui", app, "--json"], process.cwd(), fake), 2);
+      assert.equal(await run(["ui", app, "--all"], process.cwd(), fake), 2);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
