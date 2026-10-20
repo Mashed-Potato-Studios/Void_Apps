@@ -167,6 +167,7 @@ export async function tickSchedule(
     maxAttempts?: number;
     store?: ActivityStoreMode;
     appendActivity?: { appRoot: string };
+    signal?: AbortSignal;
   } & CronScheduleZone,
 ): Promise<{ state: ScheduleState; fired: CronActivityEntry[]; skipped: ScheduleSkip[] }> {
   const due = computeDue([...targets.active.keys()], state.checkpointMs, opts.nowMs, { tz: opts.tz });
@@ -184,6 +185,7 @@ export async function tickSchedule(
       scheduledTime: dueMs,
       timeoutMs: opts.timeoutMs,
       maxAttempts: opts.maxAttempts,
+      signal: opts.signal,
     });
     if (res.entry) fired.push(res.entry);
     else if (res.reason) skipped.push({ cron: expr, jobName: targets.active.get(expr)!, reason: res.reason });

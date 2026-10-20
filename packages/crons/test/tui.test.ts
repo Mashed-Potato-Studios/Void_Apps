@@ -867,3 +867,29 @@ describe("tui live-ops render", () => {
     }
   });
 });
+
+import { initScheduleState, tickSchedule } from "../src/schedule.ts";
+
+describe("tickSchedule abort", () => {
+  it("does not fetch when the loop signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let fetches = 0;
+    const state = initScheduleState(Date.UTC(2026, 0, 1, 0, 0));
+    const result = await tickSchedule(
+      state,
+      { active: new Map([["* * * * *", "alpha"]]), skipped: [] },
+      {
+        origin: "http://localhost:5173",
+        nowMs: state.checkpointMs + 60_000,
+        signal: controller.signal,
+        fetchImpl: (async () => {
+          fetches++;
+          return { ok: true, status: 200 } as Response;
+        }) as typeof fetch,
+      },
+    );
+    assert.equal(fetches, 0);
+    assert.equal(result.fired.length, 0);
+  });
+});
