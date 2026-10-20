@@ -4,7 +4,7 @@
 ![node](https://img.shields.io/badge/node-%3E%3D22.6-339933?logo=node.js&logoColor=white)
 ![type](https://img.shields.io/badge/module-ESM-yellow)
 ![license](https://img.shields.io/badge/license-MIT-green)
-![tests](https://img.shields.io/badge/tests-85_passed-brightgreen)
+![tests](https://img.shields.io/badge/tests-99_passed-brightgreen)
 ![cron-parser](https://img.shields.io/badge/cron--parser-v5-orange)
 ![react](https://img.shields.io/badge/react-18_%7C_19_optional-61dafb)
 ![platform](https://img.shields.io/badge/platform-cloudflare-F38020?logo=cloudflare&logoColor=white)
