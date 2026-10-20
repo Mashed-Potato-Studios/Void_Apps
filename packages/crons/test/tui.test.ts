@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { loadSnapshot } from "../src/tui/data.ts";
-import { appendActivityLog } from "../src/store.ts";
+import { appendActivityLog, readActivityLog } from "../src/store.ts";
 import { emitCronManifest } from "../src/manifest.ts";
 
 function job(name: string, status: CronJob["status"] = "active", expressions = ["* * * * *"]): JobView {
@@ -262,6 +262,7 @@ describe("tui keys", () => {
 });
 
 import { triggerExpression } from "../src/trigger.ts";
+import { runScheduleOnce } from "../src/schedule.ts";
 
 describe("trigger abort", () => {
   it("stops before fetching when the caller signal is already aborted", async () => {
@@ -280,8 +281,32 @@ describe("trigger abort", () => {
     assert.equal(result.ok, false);
     assert.equal(result.httpStatus, 0);
     assert.equal(result.attempts, 1);
-    assert.equal(result.entry?.status, "failed");
-    assert.match(result.entry?.error ?? "", /aborted/);
+    assert.equal(result.entry, undefined);
+    assert.match(result.reason ?? "", /aborted/);
+  });
+
+  it("does not write activity for aborted catch-up work", async () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    try {
+      const controller = new AbortController();
+      controller.abort();
+      let fetches = 0;
+      const run = await runScheduleOnce(app, {
+        origin: "http://localhost:5173",
+        signal: controller.signal,
+        nowMs: Date.UTC(2026, 0, 1, 0, 1),
+        store: "jsonl",
+        fetchImpl: (async () => {
+          fetches++;
+          return { ok: true, status: 200 } as Response;
+        }) as typeof fetch,
+      });
+      assert.equal(fetches, 0);
+      assert.equal(run.fired.length, 0);
+      assert.equal(readActivityLog(app, 10, "jsonl").length, 0);
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
   });
 });
 
@@ -305,6 +330,13 @@ class FakeInput {
   }
   press(str: string, key: { name?: string; ctrl?: boolean } = {}): void {
     for (const listener of [...this.listeners]) listener(str, key);
+  }
+}
+
+class ThrowingRawInput extends FakeInput {
+  override setRawMode(value: boolean): void {
+    super.setRawMode(value);
+    if (value) throw new Error("raw mode failed");
   }
 }
 
@@ -349,7 +381,7 @@ describe("tui runner", () => {
     const output = new FakeOutput();
     const errors: string[] = [];
     const code = await startTui(
-      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
       {
         stdin: input as never,
         stdout: output as never,
@@ -362,11 +394,62 @@ describe("tui runner", () => {
     assert.equal(output.chunks.length, 0);
   });
 
+  it("rejects a missing app directory before entering the alternate screen", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const errors: string[] = [];
+    const promise = startTui(
+      {
+        appPath: join(tmpdir(), `void-crons-missing-${process.pid}-${Date.now()}`),
+        origin: "http://localhost:5173",
+        storeMode: "jsonl",
+        retries: 0,
+        timeoutMs: 1000,
+      },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        stderr: { write: (line: string) => errors.push(line) },
+        signals: new FakeSignals() as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+      },
+    );
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 2);
+    assert.match(errors.join(""), /not a directory/);
+    assert.ok(!output.chunks.some((chunk) => chunk.includes("\u001b[?1049h")));
+  });
+
+  it("restores the terminal when setup throws after entering", async () => {
+    const input = new ThrowingRawInput();
+    const output = new FakeOutput();
+    const errors: string[] = [];
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        stderr: { write: (line: string) => errors.push(line) },
+        signals: new FakeSignals() as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+      },
+    );
+    assert.equal(await promise, 1);
+    assert.match(errors.join(""), /raw mode failed/);
+    assert.deepEqual(input.rawMode, [true, false]);
+    assert.ok(output.chunks.at(-1)?.includes("\u001b[?1049l"));
+  });
+
   it("quits cleanly and restores the terminal", async () => {
     const input = new FakeInput();
     const output = new FakeOutput();
     const promise = startTui(
-      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
       {
         stdin: input as never,
         stdout: output as never,
@@ -381,7 +464,8 @@ describe("tui runner", () => {
     assert.equal(await promise, 0);
     assert.deepEqual(input.rawMode, [true, false]);
     assert.ok(output.chunks.some((chunk) => chunk.includes("\u001b[?1049h")));
-    assert.ok(output.chunks.at(-1)?.includes("\u001b[?1049l"));
+    assert.equal(output.chunks.filter((chunk) => chunk.includes("\u001b[?1049l")).length, 1);
+    assert.ok(output.chunks.at(-1)?.includes("\u001b[?25h"));
   });
 
   it("runs one trigger at a time while busy", async () => {
@@ -399,7 +483,7 @@ describe("tui runner", () => {
       },
     });
     const promise = startTui(
-      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
       {
         stdin: input as never,
         stdout: output as never,
@@ -431,7 +515,7 @@ describe("tui runner", () => {
       },
     });
     const promise = startTui(
-      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
       {
         stdin: input as never,
         stdout: output as never,
@@ -456,7 +540,7 @@ describe("tui runner", () => {
     const output = new FakeOutput();
     const emitted: string[][] = [];
     const promise = startTui(
-      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
       {
         stdin: input as never,
         stdout: output as never,
@@ -479,12 +563,33 @@ describe("tui runner", () => {
     assert.equal(await promise, 0);
   });
 
+  it("cleans up on SIGTERM", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const signals = new FakeSignals();
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: signals as never,
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+      },
+    );
+    signals.emit("SIGTERM");
+    assert.equal(await promise, 143);
+    assert.equal(output.chunks.filter((chunk) => chunk.includes("\u001b[?1049l")).length, 1);
+  });
+
   it("cleans up on SIGINT", async () => {
     const input = new FakeInput();
     const output = new FakeOutput();
     const signals = new FakeSignals();
     const promise = startTui(
-      { appPath: "/tmp/demo", origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
       {
         stdin: input as never,
         stdout: output as never,

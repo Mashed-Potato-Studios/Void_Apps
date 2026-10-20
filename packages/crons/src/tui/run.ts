@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { emitKeypressEvents } from "node:readline";
 import { emitCronManifest } from "../manifest.js";
 import { runScheduleOnce, type ScheduleRun } from "../schedule.js";
@@ -116,6 +117,13 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
     return 2;
   }
 
+  try {
+    if (!statSync(opts.appPath).isDirectory()) throw new Error("not a directory");
+  } catch {
+    stderr.write(`error: app path is not a directory: ${opts.appPath}\n`);
+    return 2;
+  }
+
   let snapshot: Snapshot;
   try {
     snapshot = actions.load();
@@ -170,9 +178,21 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
         process.removeListener("uncaughtException", onFatal);
         process.removeListener("unhandledRejection", onFatal);
       }
-      stdin.setRawMode?.(false);
-      stdin.pause();
-      stdout.write(LEAVE);
+      try {
+        stdin.setRawMode?.(false);
+      } catch {
+        // Best effort: the terminal may already be gone.
+      }
+      try {
+        stdin.pause();
+      } catch {
+        // Best effort.
+      }
+      try {
+        stdout.write(LEAVE);
+      } catch {
+        // Best effort: still resolve so the process can exit.
+      }
       resolve(code);
     };
 
@@ -295,19 +315,24 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       cleanup(1);
     };
 
-    if (!deps.stdin) emitKeypressEvents(process.stdin);
-    stdin.setEncoding("utf8");
-    stdin.setRawMode?.(true);
-    stdin.resume();
-    stdout.write(ENTER);
-    stdin.on("keypress", onKey);
-    signals.on("SIGINT", onSigint);
-    signals.on("SIGTERM", onSigterm);
-    signals.on("SIGWINCH", onResize);
-    process.once("uncaughtException", onFatal);
-    process.once("unhandledRejection", onFatal);
-    fatalInstalled = true;
-    timer = (deps.setInterval ?? setInterval)(draw, TICK_MS);
-    draw();
+    try {
+      if (!deps.stdin) emitKeypressEvents(process.stdin);
+      stdin.setEncoding("utf8");
+      stdin.setRawMode?.(true);
+      stdin.resume();
+      stdout.write(ENTER);
+      stdin.on("keypress", onKey);
+      signals.on("SIGINT", onSigint);
+      signals.on("SIGTERM", onSigterm);
+      signals.on("SIGWINCH", onResize);
+      process.once("uncaughtException", onFatal);
+      process.once("unhandledRejection", onFatal);
+      fatalInstalled = true;
+      timer = (deps.setInterval ?? setInterval)(draw, TICK_MS);
+      draw();
+    } catch (error) {
+      stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+      cleanup(1);
+    }
   });
 }

@@ -89,7 +89,7 @@ export async function triggerExpression(
     if (opts.signal?.aborted) {
       return {
         ok: false,
-        entry: mkEntry(opts, jobName, expression, scheduledTime, startedAt, "failed", "aborted"),
+        reason: "aborted",
         httpStatus: 0,
         attempts: Math.max(1, attempt),
         retried: false,
@@ -133,7 +133,7 @@ export async function triggerExpression(
     if (opts.signal?.aborted) {
       return {
         ok: false,
-        entry: mkEntry(opts, jobName, expression, scheduledTime, startedAt, "failed", "aborted"),
+        reason: "aborted",
         httpStatus: 0,
         attempts: attempt,
         retried: attempt > 1,
