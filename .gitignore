@@ -4,6 +4,7 @@ node_modules/
 
 # Void Cloud build and local state
 .void/
+.void-wrangler.jsonc
 dist/
 .output/
 void.crons.activity.json
