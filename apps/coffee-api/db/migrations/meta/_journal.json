@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792532027217,
+      "tag": "20261020213347_spotty_mordo",
+      "breakpoints": true
+    }
+  ]
+}

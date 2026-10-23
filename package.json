@@ -9,6 +9,9 @@
     "dev:web": "turbo run dev --filter=@void-monorepo/web",
     "dev:api": "turbo run dev --filter=@void-monorepo/api",
     "dev:admin": "turbo run dev --filter=@void-monorepo/admin",
+    "dev:coffee": "turbo run dev --filter=@void-monorepo/coffee --filter=@void-monorepo/coffee-api --filter=@void-monorepo/coffee-admin",
+    "dev:coffee-api": "turbo run dev --filter=@void-monorepo/coffee-api",
+    "dev:coffee-admin": "turbo run dev --filter=@void-monorepo/coffee-admin",
     "build": "turbo run build",
     "test": "turbo run test",
     "fp:check:all": "turbo run fp:check",
@@ -21,7 +24,10 @@
     "void:deploy": "turbo run void:deploy",
     "void:deploy:web": "pnpm --filter @void-monorepo/web void:deploy",
     "void:deploy:api": "pnpm --filter @void-monorepo/api void:deploy",
-    "void:deploy:admin": "pnpm --filter @void-monorepo/admin void:deploy"
+    "void:deploy:admin": "pnpm --filter @void-monorepo/admin void:deploy",
+    "void:deploy:coffee": "pnpm --filter @void-monorepo/coffee-api void:deploy && pnpm --filter @void-monorepo/coffee void:deploy && pnpm --filter @void-monorepo/coffee-admin void:deploy",
+    "void:deploy:coffee-api": "pnpm --filter @void-monorepo/coffee-api void:deploy",
+    "void:deploy:coffee-admin": "pnpm --filter @void-monorepo/coffee-admin void:deploy"
   },
   "devDependencies": {
     "turbo": "^2.3.4",

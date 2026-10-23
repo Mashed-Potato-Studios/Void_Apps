@@ -1,0 +1,32 @@
+{
+  "name": "@void-monorepo/coffee-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5175",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "void:deploy": "void deploy",
+    "fp:emit": "void-fingerprint emit",
+    "fp:check": "void-fingerprint check --ci",
+    "fp:graph": "void-fingerprint graph",
+    "crons:list": "void-crons list",
+    "crons:check": "void-crons check",
+    "crons:emit": "void-crons emit",
+    "crons:schedule": "void-crons schedule --origin http://localhost:5175"
+  },
+  "dependencies": {
+    "@void-monorepo/coffee-contract": "workspace:*",
+    "@void-monorepo/types": "workspace:*",
+    "void": "^1.1.11"
+  },
+  "devDependencies": {
+    "@void-monorepo/config": "workspace:*",
+    "typescript": "^5.7.3",
+    "vite": "^8.0.0",
+    "void-crons": "workspace:*",
+    "void-fingerprint": "workspace:*"
+  }
+}

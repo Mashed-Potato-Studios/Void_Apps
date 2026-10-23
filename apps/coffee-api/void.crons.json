@@ -1,0 +1,69 @@
+{
+  "format": 1,
+  "app": "coffee-api",
+  "emittedAt": "2026-10-20T21:37:38.232Z",
+  "jobs": [
+    {
+      "path": "crons/rollover.ts",
+      "name": "rollover",
+      "expressions": [
+        "0 3 * * *"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    },
+    {
+      "path": "crons/sales-digest.ts",
+      "name": "sales-digest",
+      "expressions": [
+        "0 18 * * 5"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    },
+    {
+      "path": "crons/stock-alert.ts",
+      "name": "stock-alert",
+      "expressions": [
+        "30 7 * * *"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    },
+    {
+      "path": "crons/top-coffee.ts",
+      "name": "top-coffee",
+      "expressions": [
+        "15 * * * *"
+      ],
+      "status": "active",
+      "usesDefineScheduled": true,
+      "sharedExpression": false
+    }
+  ],
+  "schedules": [
+    {
+      "name": "rollover",
+      "cron": "0 3 * * *"
+    },
+    {
+      "name": "sales-digest",
+      "cron": "0 18 * * 5"
+    },
+    {
+      "name": "stock-alert",
+      "cron": "30 7 * * *"
+    },
+    {
+      "name": "top-coffee",
+      "cron": "15 * * * *"
+    }
+  ],
+  "expressionCount": 4,
+  "scheduleCount": 4,
+  "disabled": [],
+  "invalid": []
+}

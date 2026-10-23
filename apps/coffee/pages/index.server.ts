@@ -1,13 +1,30 @@
 import { defineHandler } from 'void';
 import type { InferProps } from 'void';
-import { initialMenu } from '../db/seed.js';
-import type { MenuItem } from '../db/schema.js';
+import { env } from 'void/env';
+import { createCoffeeClient, type MenuItem } from '@void-monorepo/coffee-contract';
 
-export type MenuLoader = { menu: MenuItem[] };
-export type Props = InferProps<typeof loader>;
+export interface StorefrontData {
+  menu: MenuItem[];
+  menuError: string | null;
+  adminUrl: string;
+}
 
-// Degraded-mode: D1 read lands here once local D1 is provisioned (Task 6 wires
-// `db from 'void/db'`); until then the seed keeps the page rendering.
-export const loader = defineHandler(async (): Promise<MenuLoader> => {
-  return { menu: initialMenu };
+/**
+ * The café is a pure frontend: the menu comes from the coffee API so stock
+ * updates, admin edits, and nightly restocks are visible without a rebuild.
+ */
+export const loader = defineHandler(async (): Promise<StorefrontData> => {
+  const client = createCoffeeClient({ baseUrl: env.COFFEE_API_URL });
+  try {
+    return { menu: await client.getMenu(), menuError: null, adminUrl: env.COFFEE_ADMIN_URL };
+  } catch (cause) {
+    console.log('[coffee] menu unavailable:', cause instanceof Error ? cause.message : String(cause));
+    return {
+      menu: [],
+      menuError: 'The menu is being restocked. Please try again in a moment.',
+      adminUrl: env.COFFEE_ADMIN_URL,
+    };
+  }
 });
+
+export type Props = InferProps<typeof loader>;

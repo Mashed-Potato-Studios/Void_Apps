@@ -1,0 +1,207 @@
+/* Back-office layout on top of the shared Crew Coffee theme. */
+
+.admin-main {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 3.5rem;
+}
+
+.admin-panel {
+  margin-top: 2rem;
+  background: var(--g-paper, #fffbf0);
+  border: 2.5px solid var(--g-pine, #23433d);
+  border-radius: 18px;
+  box-shadow: 4px 4px 0 var(--g-pine, #23433d);
+  padding: 1.25rem 1.4rem;
+}
+
+.admin-panel-title {
+  margin: 0 0 0.9rem;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--g-pine, #23433d);
+}
+
+.admin-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1rem;
+  margin: 0;
+}
+
+.admin-metrics dt {
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--g-ink-soft, #5d7a70);
+}
+
+.admin-metrics dd {
+  margin: 0.2rem 0 0;
+  font-size: 1.8rem;
+  font-weight: 900;
+  color: var(--g-pine, #23433d);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+}
+
+.admin-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--g-ink-soft, #5d7a70);
+  border-bottom: 2px solid var(--g-pine, #23433d);
+  padding: 0.55rem 0.6rem;
+}
+
+.admin-table td {
+  padding: 0.7rem 0.6rem;
+  border-bottom: 1.5px dashed rgba(35, 67, 61, 0.25);
+  vertical-align: top;
+}
+
+.admin-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-money {
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.admin-lines {
+  color: var(--g-ink-soft, #5d7a70);
+  line-height: 1.5;
+}
+
+.admin-input {
+  width: 100%;
+  min-width: 70px;
+  padding: 0.4rem 0.5rem;
+  border: 2px solid var(--g-pine, #23433d);
+  border-radius: 9px;
+  background: #fffdf7;
+  font: inherit;
+  font-size: 0.88rem;
+  color: var(--g-pine, #23433d);
+}
+
+.admin-input:focus-visible {
+  outline: 3px solid rgba(79, 138, 104, 0.4);
+  outline-offset: 1px;
+}
+
+.admin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--g-pine, #23433d);
+}
+
+.admin-notice {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.admin-notice--ok {
+  color: var(--g-teal, #3a7a6e);
+}
+
+.admin-notice--error {
+  color: var(--g-terracotta, #b5532f);
+}
+
+.admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.admin-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 0.9rem;
+  border: 2.5px solid var(--g-pine, #23433d);
+  border-radius: 999px;
+  background: var(--g-honey, #f2c14e);
+  color: var(--g-pine, #23433d);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 2px 2px 0 var(--g-pine, #23433d);
+}
+
+.admin-button:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--g-pine, #23433d);
+}
+
+.admin-button:disabled {
+  opacity: 0.55;
+  cursor: progress;
+  box-shadow: none;
+}
+
+.admin-job-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+}
+
+.admin-dot {
+  width: 12px;
+  height: 12px;
+  margin-top: 0.35rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+  background: var(--g-teal, #4f8a68);
+  box-shadow: 0 0 0 4px rgba(79, 138, 104, 0.2);
+}
+
+.admin-dot--failed {
+  background: var(--g-terracotta, #c05740);
+  box-shadow: 0 0 0 4px rgba(192, 87, 64, 0.18);
+}
+
+.admin-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  background: #f7ecd6;
+  border: 1.5px solid var(--g-pine, #23433d);
+  border-radius: 999px;
+  padding: 0.12rem 0.6rem;
+  color: var(--g-pine, #23433d);
+  white-space: nowrap;
+}
+
+.admin-empty {
+  color: var(--g-ink-soft, #5d7a70);
+  margin: 0.5rem 0;
+}
+
+@media (max-width: 760px) {
+  .admin-main {
+    padding: 1.4rem 1rem 3rem;
+  }
+
+  .admin-table {
+    font-size: 0.84rem;
+  }
+
+  .admin-table th:nth-child(2),
+  .admin-table td:nth-child(2) {
+    display: none;
+  }
+}

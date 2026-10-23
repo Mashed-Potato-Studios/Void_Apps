@@ -106,9 +106,12 @@ importers:
 
   apps/coffee:
     dependencies:
-      '@void-monorepo/types':
+      '@void-monorepo/coffee-contract':
         specifier: workspace:*
-        version: link:../../packages/types
+        version: link:../../packages/coffee-contract
+      '@void-monorepo/coffee-theme':
+        specifier: workspace:*
+        version: link:../../packages/coffee-theme
       '@void-monorepo/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -124,9 +127,6 @@ importers:
       void:
         specifier: ^1.1.11
         version: 1.1.11(@types/node@22.20.5)(arktype@2.2.8)(gel@2.2.1)(kysely@0.29.7)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(valibot@1.5.0(typescript@5.9.3))(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(wrangler@4.151.1(@cloudflare/workers-types@5.20261018.1)(@types/node@22.20.5))(zod@4.6.7)
-      void-crons:
-        specifier: workspace:*
-        version: link:../../packages/crons
     devDependencies:
       '@types/react':
         specifier: ^19
@@ -143,6 +143,77 @@ importers:
       vite:
         specifier: ^8.0.0
         version: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
+      void-fingerprint:
+        specifier: workspace:*
+        version: link:../../packages/void-fingerprint
+
+  apps/coffee-admin:
+    dependencies:
+      '@void-monorepo/coffee-contract':
+        specifier: workspace:*
+        version: link:../../packages/coffee-contract
+      '@void-monorepo/coffee-theme':
+        specifier: workspace:*
+        version: link:../../packages/coffee-theme
+      '@void-monorepo/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      '@void/react':
+        specifier: 1.1.11
+        version: 1.1.11(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(void@1.1.11(@types/node@22.20.5)(arktype@2.2.8)(gel@2.2.1)(kysely@0.29.7)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(valibot@1.5.0(typescript@5.9.3))(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(wrangler@4.151.1(@cloudflare/workers-types@5.20261018.1)(@types/node@22.20.5))(zod@4.6.7))
+      react:
+        specifier: ^19
+        version: 19.3.1
+      react-dom:
+        specifier: ^19
+        version: 19.3.1(react@19.3.1)
+      void:
+        specifier: ^1.1.11
+        version: 1.1.11(@types/node@22.20.5)(arktype@2.2.8)(gel@2.2.1)(kysely@0.29.7)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(valibot@1.5.0(typescript@5.9.3))(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(wrangler@4.151.1(@cloudflare/workers-types@5.20261018.1)(@types/node@22.20.5))(zod@4.6.7)
+    devDependencies:
+      '@types/react':
+        specifier: ^19
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19
+        version: 19.3.0(@types/react@19.3.0)
+      '@void-monorepo/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
+      void-fingerprint:
+        specifier: workspace:*
+        version: link:../../packages/void-fingerprint
+
+  apps/coffee-api:
+    dependencies:
+      '@void-monorepo/coffee-contract':
+        specifier: workspace:*
+        version: link:../../packages/coffee-contract
+      '@void-monorepo/types':
+        specifier: workspace:*
+        version: link:../../packages/types
+      void:
+        specifier: ^1.1.11
+        version: 1.1.11(@types/node@22.20.5)(arktype@2.2.8)(gel@2.2.1)(kysely@0.29.7)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(valibot@1.5.0(typescript@5.9.3))(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))(wrangler@4.151.1(@cloudflare/workers-types@5.20261018.1)(@types/node@22.20.5))(zod@4.6.7)
+    devDependencies:
+      '@void-monorepo/config':
+        specifier: workspace:*
+        version: link:../../packages/config
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+      vite:
+        specifier: ^8.0.0
+        version: 8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)
+      void-crons:
+        specifier: workspace:*
+        version: link:../../packages/crons
       void-fingerprint:
         specifier: workspace:*
         version: link:../../packages/void-fingerprint
@@ -222,6 +293,24 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  packages/coffee-contract:
+    devDependencies:
+      '@void-monorepo/config':
+        specifier: workspace:*
+        version: link:../config
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/coffee-theme:
+    devDependencies:
+      '@void-monorepo/config':
+        specifier: workspace:*
+        version: link:../config
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/config: {}
 
   packages/crons:
@@ -229,6 +318,9 @@ importers:
       cron-parser:
         specifier: ^5
         version: 5.10.2
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
     devDependencies:
       '@types/node':
         specifier: ^22
@@ -251,9 +343,6 @@ importers:
       react-dom:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
-      typescript:
-        specifier: ^5.7.3
-        version: 5.9.3
 
   packages/db:
     dependencies:

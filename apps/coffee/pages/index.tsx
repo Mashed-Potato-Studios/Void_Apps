@@ -1,17 +1,53 @@
 import { useState, type FormEvent } from 'react';
 import { Header } from '@void-monorepo/ui';
-import { initialMenu } from '../db/seed.js';
 import type { Props } from './index.server.js';
-import { HERO_IMAGE, coffeePhoto } from './photos.js';
+import { HERO_IMAGE, coffeePhoto } from '@void-monorepo/coffee-theme';
 import '@void-monorepo/ui/styles.css';
-import './coffee.css';
+import '@void-monorepo/coffee-theme/styles.css';
 
 export const head = () => ({
   title: 'Menu',
-  meta: [{ name: 'description', content: 'Crew Coffee menu — single origins and house blends' }],
+  meta: [
+    {
+      name: 'description',
+      content: 'Crew Coffee — cozy corner café. Espresso, cappuccino, pour over and more, brewed to real recipes.',
+    },
+  ],
 });
 
-export default function StorefrontPage({ menu = initialMenu }: Props) {
+function Sparkle({ className }: { className: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M12 1.8l2.4 7.6 7.8 2.6-7.8 2.6L12 22.2l-2.4-7.6L1.8 12l7.8-2.6z"
+        fill="currentColor"
+        stroke="#23433d"
+        strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function SteamDoodle() {
+  return (
+    <svg className="coffee-doodle coffee-doodle--steam" viewBox="0 0 40 60" aria-hidden="true" focusable="false">
+      <path d="M14 56c-6-8 6-10 2-18s6-10 2-18" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
+      <path d="M28 56c-5-7 5-9 1-16s5-9 1-16" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function LeafDoodle() {
+  return (
+    <svg className="coffee-doodle coffee-doodle--leaf" viewBox="0 0 40 40" aria-hidden="true" focusable="false">
+      <path d="M6 34C6 18 18 6 34 6c0 16-12 28-28 28Z" fill="none" stroke="currentColor" strokeWidth="3" strokeLinejoin="round" />
+      <path d="M10 30C16 22 22 16 30 10" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export default function StorefrontPage({ menu = [], menuError = null, adminUrl = '/' }: Props) {
   const [cart, setCart] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,6 +64,7 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
     });
   const entries = Object.entries(cart).filter(([, q]) => q > 0);
   const itemCount = entries.reduce((n, [, q]) => n + q, 0);
+  const nameFor = (slug: string): string => menu.find((m) => m.slug === slug)?.name ?? slug;
 
   async function checkout(event: FormEvent): Promise<void> {
     event.preventDefault();
@@ -35,7 +72,7 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch('/api/orders', {
+      const res = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ items: entries.map(([slug, qty]) => ({ slug, qty })) }),
@@ -58,26 +95,43 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
         badgeText="Void Quickstart"
         links={[
           { label: 'Menu', href: '/', active: true },
-          { label: 'Dashboard', href: '/dashboard' },
-          { label: 'Crons', href: '/admin/crons' },
+          { label: 'Staff', href: adminUrl },
         ]}
-        style={{ backgroundColor: '#fffdf8', borderBottom: '1px solid #e7dccb' }}
+        style={{ backgroundColor: '#fffbf0', borderBottom: '3px solid #23433d' }}
       />
-      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '2rem 1.5rem 3rem' }}>
-        <section className="coffee-hero" style={{ backgroundImage: `url(${HERO_IMAGE})` }}>
-          <div className="coffee-hero-shade" />
+      <main style={{ maxWidth: 1100, margin: '0 auto', padding: '2rem 1.5rem 4rem' }}>
+        <section className="coffee-hero">
           <div className="coffee-hero-copy">
-            <span className="coffee-eyebrow">Roasted fresh · Brewed slow</span>
-            <h1>Good mornings start at Crew Coffee.</h1>
+            <span className="coffee-eyebrow">Small batch · slow mornings</span>
+            <h1>
+              Good mornings start at <span className="coffee-underline">Crew Coffee</span>.
+            </h1>
             <p>
-              Single origins and house blends, roasted weekly and brewed with
-              care. Pick your bag below — checkout is a demo, the aroma is real.
+              Real espresso, hand-poured brews, and ten recipes we actually follow behind the
+              counter. Pick a drink below — stock is live, and the barista sees your order.
             </p>
-            <a className="coffee-hero-cta" href="#menu">
-              Shop the menu ↓
-            </a>
+            <div className="coffee-hero-actions">
+              <a className="coffee-hero-cta" href="#menu">
+                Browse the menu ↓
+              </a>
+              <span className="coffee-hero-note">{menu.length} drinks · real recipes</span>
+            </div>
+            <div className="coffee-speech">Freshly ground, always.</div>
           </div>
+          <figure className="coffee-hero-frame">
+            <img src={HERO_IMAGE} alt="Sunlit café table with a french press beside a garden window" />
+            <SteamDoodle />
+            <Sparkle className="coffee-doodle coffee-doodle--sparkle-a" />
+            <Sparkle className="coffee-doodle coffee-doodle--sparkle-b" />
+            <LeafDoodle />
+          </figure>
         </section>
+
+        {menuError ? (
+          <div className="coffee-alert coffee-alert-error" style={{ marginTop: '1.5rem' }}>
+            {menuError}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="coffee-alert coffee-alert-error" style={{ marginTop: '1.5rem' }}>
@@ -87,8 +141,14 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
 
         {order ? (
           <div className="coffee-confirm" style={{ marginTop: '1.5rem' }}>
-            <h2>Order {order.id} is in! ☕</h2>
-            <p>Thanks — your coffee is being bagged. Show this id at the counter.</p>
+            <div className="coffee-confirm-sparkles" aria-hidden="true">
+              <Sparkle className="" />
+              <Sparkle className="" />
+              <Sparkle className="" />
+              <Sparkle className="" />
+            </div>
+            <h2>Order {order.id} is in!</h2>
+            <p>Thanks — the barista is already grinding. Show this id at the counter.</p>
             <button
               className="coffee-add-btn"
               onClick={() => {
@@ -104,23 +164,21 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
               The menu
             </h2>
             <p className="coffee-section-sub">
-              Ten roasts · whole bean · {menu.filter((m) => m.stock > 0).length} in stock now
+              {menu.length} drinks · hot and iced · {menu.filter((m) => m.stock > 0).length} ready right now
             </p>
             <section className="coffee-menu-grid">
               {menu.map((m) => {
-                const { image, notes } = coffeePhoto(m.slug);
+                const { image, recipe } = coffeePhoto(m.slug);
                 const qty = cart[m.slug] ?? 0;
                 return (
                   <article key={m.slug} className="coffee-card">
                     <div className="coffee-card-photo">
                       <img src={image} alt={m.name} loading="lazy" />
-                      <span className="coffee-card-origin">
-                        {m.origin === 'single' ? 'Single origin' : 'House blend'}
-                      </span>
+                      <span className="coffee-card-origin">{m.origin === 'hot' ? 'Hot' : 'Iced'}</span>
                     </div>
                     <div className="coffee-card-body">
                       <h3 className="coffee-card-name">{m.name}</h3>
-                      <p className="coffee-card-notes">{notes}</p>
+                      <p className="coffee-card-recipe">{recipe}</p>
                       <div className="coffee-card-row">
                         <span className="coffee-price">${(m.priceCents / 100).toFixed(2)}</span>
                         {m.stock === 0 ? (
@@ -128,15 +186,18 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
                         ) : m.stock < 5 ? (
                           <span className="coffee-stock-low">Only {m.stock} left</span>
                         ) : (
-                          <span className="coffee-stock-low" style={{ color: '#4d7c5f' }}>
-                            In stock
-                          </span>
+                          <span className="coffee-stock-low coffee-stock-low--ok">In stock</span>
                         )}
                       </div>
                       <div className="coffee-card-row">
                         {qty > 0 ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                            <button type="button" className="coffee-add-btn" onClick={() => remove(m.slug)}>
+                          <div className="coffee-cart-controls">
+                            <button
+                              type="button"
+                              className="coffee-add-btn coffee-add-btn--ghost"
+                              onClick={() => remove(m.slug)}
+                              aria-label={`Remove one ${m.name}`}
+                            >
                               −
                             </button>
                             <strong>{qty} in cart</strong>
@@ -145,6 +206,7 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
                               className="coffee-add-btn"
                               disabled={!m.stock}
                               onClick={() => add(m.slug)}
+                              aria-label={`Add one ${m.name}`}
                             >
                               +
                             </button>
@@ -172,7 +234,7 @@ export default function StorefrontPage({ menu = initialMenu }: Props) {
           <form className="coffee-cartbar" onSubmit={checkout}>
             <span className="coffee-cartbar-count">
               <strong>{itemCount}</strong> item{itemCount === 1 ? '' : 's'} ·{' '}
-              {entries.map(([slug, qty]) => `${qty}× ${slug}`).join(', ')}
+              {entries.map(([slug, qty]) => `${qty}× ${nameFor(slug)}`).join(', ')}
             </span>
             <button type="submit" className="coffee-checkout-btn" disabled={busy}>
               {busy ? 'Placing order…' : 'Checkout →'}

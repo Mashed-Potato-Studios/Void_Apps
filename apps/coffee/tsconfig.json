@@ -1,11 +1,15 @@
 {
   "extends": "@void-monorepo/config/tsconfig/app.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client", "void/env"]
+  },
   "include": [
-    "db/**/*",
+    ".void/env.d.ts",
     "pages/**/*",
     "routes/**/*",
-    "crons/**/*",
     "middleware/**/*",
+    "env.ts",
     "vite.config.ts",
     "void.config.ts"
   ]

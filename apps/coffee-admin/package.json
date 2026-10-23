@@ -1,0 +1,33 @@
+{
+  "name": "@void-monorepo/coffee-admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 5174",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "void:deploy": "void deploy",
+    "fp:emit": "void-fingerprint emit",
+    "fp:check": "void-fingerprint check --ci",
+    "fp:graph": "void-fingerprint graph"
+  },
+  "dependencies": {
+    "@void-monorepo/coffee-contract": "workspace:*",
+    "@void-monorepo/coffee-theme": "workspace:*",
+    "@void-monorepo/ui": "workspace:*",
+    "@void/react": "1.1.11",
+    "react": "^19",
+    "react-dom": "^19",
+    "void": "^1.1.11"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@void-monorepo/config": "workspace:*",
+    "typescript": "^5.7.3",
+    "vite": "^8.0.0",
+    "void-fingerprint": "workspace:*"
+  }
+}
