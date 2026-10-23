@@ -23,11 +23,11 @@ export default function AdminDashboard({
   edgeRegion = 'iad',
   status = 'Operational',
 }: {
-  userCount: number;
-  postCount: number;
-  activeWorkflows: number;
-  edgeRegion: string;
-  status: string;
+  userCount?: number;
+  postCount?: number;
+  activeWorkflows?: number;
+  edgeRegion?: string;
+  status?: string;
 }) {
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#08060d', color: '#fff' }}>

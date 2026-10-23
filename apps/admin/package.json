@@ -21,7 +21,8 @@
     "@void-monorepo/types": "workspace:*",
     "@void-monorepo/ui": "workspace:*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "@void-monorepo/flow": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.18",

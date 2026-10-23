@@ -26,6 +26,9 @@ importers:
       '@void-monorepo/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@void-monorepo/flow':
+        specifier: workspace:*
+        version: link:../../packages/flow
       '@void-monorepo/types':
         specifier: workspace:*
         version: link:../../packages/types
