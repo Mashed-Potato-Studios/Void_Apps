@@ -1,14 +1,27 @@
-## Todo
-
-TUI for void-crons — spec: `docs/superpowers/specs/crons-tui.md`, plan: `docs/superpowers/plans/2026-10-20-void-crons-tui.md`.
-
-
-
-Constraints: zero new runtime deps, single app only (`--json`/`--all` rejected), toggles session-only (only `emit` persists), terminal always restored, tests need no pty.
-
-## Doing
-
 ## Done
+
+### Runtime integrations (0.4.0)
+
+- [x] D1 ledger adapter with idempotent writes, retention, and query APIs (#13)
+- [x] Queue correlation with enqueue, completion, retry, and exhaustion phases (#14)
+- [x] Native durable-state lease/pause coordination (#15)
+- [x] Authorized live notifications after persistence (#16)
+- [x] Verified production transport with evidence-backed `doctor` (#17)
+- [x] Verification: typecheck, build, 262 tests, packed-package export smoke
+
+### TUI live ops (0.3.0)
+
+- [x] Live schedule loop, start/stop with `s` (`8615d14`)
+- [x] Job detail line + `v` detail pane (`5cb43d0`)
+- [x] `/` filter and `o` sort cycle (`8615d14`, `5cb43d0`)
+- [x] `fs.watch` auto-rescan with debounce (`986f5aa`)
+- [x] Abortable schedule ticks (`757b8ee`)
+- [x] Runner loop + watcher integration (`4d98e6b`)
+- [x] Tests: model, keys, render, watcher, runner, abort (`4d98e6b`)
+- [x] README live-loop/filter/sort/detail docs, screenshot, `0.3.0` (`cd5a361`, `35179ad`)
+- [x] Final review fixes: discard stale loop ticks, advance idle checkpoint (`7f1b707`; 99 tests)
+
+### TUI (0.2.0)
 
 - [x] Task 1: State model and reducer (`2402570` — `TuiState`, `Msg`, `reduce()`, `createState`)
 - [x] Task 2: Width-safe renderer (`0a337bb` — `src/tui/render.ts`, pure, width-aware, `NO_COLOR` clean)

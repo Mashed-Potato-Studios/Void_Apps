@@ -1,5 +1,13 @@
 import type { CronActivityEntry } from "../types.js";
-import { activityRowsForHeight, jobRowsForHeight, type JobView, type TuiState } from "./model.js";
+import {
+  activityRowsForHeight,
+  jobRowsForHeight,
+  nextActiveFireMs,
+  selectedJob,
+  visibleJobs,
+  type JobView,
+  type TuiState,
+} from "./model.js";
 
 const ESC = "\u001b[";
 const RESET = `${ESC}0m`;
@@ -32,7 +40,7 @@ function twoCol(left: string, right: string, width: number): string {
   const l = truncate(left, width);
   const r = truncate(right, width);
   const gap = width - [...l].length - [...r].length;
-  if (gap <= 0) return truncate(l, width);
+  if (gap <= 0) return truncate(`${l} ${r}`, width);
   return truncate(`${l}${" ".repeat(gap)}${r}`, width);
 }
 
@@ -63,19 +71,58 @@ function fmtNext(job: JobView, nowMs: number): string {
   return `next ${Math.round(seconds / 3600)}h`;
 }
 
+function fmtIn(dueMs: number, nowMs: number): string {
+  const seconds = Math.max(0, Math.round((dueMs - nowMs) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 5400) return `${Math.max(1, Math.round(seconds / 60))}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
 function fmtLast(job: JobView, nowMs: number): string {
   if (!job.last) return "—";
   const finished = new Date(job.last.finishedAt).getTime();
   if (Number.isNaN(finished)) return job.last.status;
   const minutes = Math.max(0, Math.round((nowMs - finished) / 60_000));
   const when = minutes < 1 ? "now" : minutes < 60 ? `${minutes}m` : `${Math.round(minutes / 60)}h`;
-  return `last ${job.last.status === "success" ? "ok" : "fail"} ${when}`;
+  return `last ${job.last.status === "success" ? "ok" : job.last.status} ${when}`;
 }
 
 function markerFor(job: JobView): { text: string; code: string } {
   if (job.status === "active") return { text: "●", code: GREEN };
   if (job.status === "disabled") return { text: "○", code: YELLOW };
   return { text: "✕", code: RED };
+}
+
+function detailLine(job: JobView | undefined, nowMs: number, width: number): string {
+  if (!job) return pad(" no job selected", width);
+  if (job.status === "invalid") {
+    return pad(` ${job.path} · invalid · ${job.error ?? "invalid job"}`, width);
+  }
+  const parts = [job.path, job.status];
+  if (job.expressions.length > 0) parts.push(job.expressions.join(", "));
+  parts.push(job.usesDefineScheduled ? "defineScheduled" : "bare");
+  parts.push(fmtLast(job, nowMs));
+  return pad(` ${parts.join(" · ")}`, width);
+}
+
+function detailBody(job: JobView | undefined, nowMs: number, width: number): string[] {
+  if (!job) return [pad(" no job selected", width)];
+  const last = job.last;
+  const lastLine = last
+    ? `${last.status} · ${last.durationMs}ms · ${hhmm(last.finishedAt)} · ${last.source}${
+        last.itemsProcessed !== undefined ? ` · items ${last.itemsProcessed}` : ""
+      }`
+    : "—";
+  const error = job.error ?? last?.error;
+  return [
+    ` path: ${job.path}`,
+    ` expressions: ${job.expressions.length > 0 ? job.expressions.join(", ") : "—"}`,
+    ` status: ${job.status} · wrapper: ${job.usesDefineScheduled ? "defineScheduled" : "bare"} · shared: ${
+      job.sharedExpression ? "yes" : "no"
+    }`,
+    ` next: ${fmtNext(job, nowMs)} · last: ${lastLine}`,
+    ` error: ${error ?? "—"}`,
+  ].map((line) => pad(line, width));
 }
 
 function jobRow(job: JobView, selected: boolean, width: number, nowMs: number, color: boolean): string {
@@ -106,29 +153,39 @@ function jobRow(job: JobView, selected: boolean, width: number, nowMs: number, c
 }
 
 function activityRow(entry: CronActivityEntry, width: number): string {
-  const status = entry.status === "success" ? "ok" : "fail";
+  const status = entry.kind === "dispatch" && entry.status === "success" ? "ack" : entry.status === "success" ? "ok" : entry.status;
   return pad(
     truncate(`  ↳ ${hhmm(entry.finishedAt)} ${entry.jobName} ${entry.cron} ${status} ${entry.durationMs}ms`, width),
     width,
   );
 }
 
-function keysLine(width: number): string {
-  const full = " ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · r refresh · q quit";
-  const mid = " ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · r refresh · q quit";
-  const small = " ↑↓ move · ↵ trigger · d/e/c/r · q quit";
-  return truncate(width >= 84 ? full : width >= 64 ? mid : small, width);
+function keysLine(state: TuiState, width: number): string {
+  if (state.filterInput) {
+    return truncate(` filter: ${state.filter}  · enter apply · esc clear`, width);
+  }
+  const full = " ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r refresh · q quit";
+  const mid = " ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r · q";
+  const small = " ↑↓ move · ↵ · d e c s / o v r q";
+  return truncate(width >= 112 ? full : width >= 64 ? mid : small, width);
 }
 
-function statusLine(state: TuiState, width: number): string {
+function statusLine(state: TuiState, width: number, nowMs: number): string {
   if (state.busy) return pad(` status: ${state.busy}…`, width);
-  if (!state.status) return pad(" status: ready", width);
-  const label =
-    state.status.kind === "error" ? "error: " : state.status.kind === "success" ? "ok: " : "";
-  const text = pad(` status: ${label}${state.status.message}`, width);
-  if (state.status.kind === "error") return style(text, RED, state.color);
-  if (state.status.kind === "success") return style(text, GREEN, state.color);
-  return text;
+  if (state.status) {
+    const label =
+      state.status.kind === "error" ? "error: " : state.status.kind === "success" ? "ok: " : "";
+    const text = pad(` status: ${label}${state.status.message}`, width);
+    if (state.status.kind === "error") return style(text, RED, state.color);
+    if (state.status.kind === "success") return style(text, GREEN, state.color);
+    return text;
+  }
+  if (state.loop.running) {
+    const next = nextActiveFireMs(state);
+    const when = next === null ? "next —" : `next in ${fmtIn(next, nowMs)}`;
+    return pad(` status: live · ${state.loop.firedTotal} fired · ${when}`, width);
+  }
+  return pad(" status: ready", width);
 }
 
 export function render(state: TuiState, nowMs: number, color = state.color): string[] {
@@ -141,17 +198,18 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
   const schedules = active.reduce((count, job) => count + job.expressions.length, 0);
   const manifestNote =
     state.manifest === "drift" ? `manifest drift (${state.drift.length})` : `manifest ${state.manifest}`;
+  const loopLabel = state.loop.running ? `loop LIVE · ${state.loop.firedTotal} fired` : "loop off";
 
   lines.push(
     twoCol(
       ` void-crons · ${state.appName}`,
-      `${state.tz ? `tz ${state.tz}` : "tz local"} · ${state.storeMode} · ${originLabel(state.origin)}`,
+      `${loopLabel} · ${state.tz ? `tz ${state.tz}` : "tz local"} · ${state.storeMode} · ${originLabel(state.origin)}`,
       width,
     ),
   );
   lines.push(
     twoCol(
-      ` ${state.jobs.length} jobs · ${expressions} expr · ${schedules} sched`,
+      ` ${state.jobs.length} jobs · ${expressions} expr · ${schedules} sched · sort ${state.sort}`,
       `${manifestNote} · scan ${clock(state.scannedAt)}`,
       width,
     ),
@@ -159,36 +217,50 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
   lines.push(rule(width));
 
   const rows = jobRowsForHeight(height);
-  const viewport = state.jobs.slice(state.scroll, state.scroll + rows);
+  const visible = visibleJobs(state);
+  const viewport = visible.slice(state.scroll, state.scroll + rows);
   const selectedIndex = state.selected - state.scroll;
   for (let i = 0; i < rows; i++) {
     const job = viewport[i];
     if (!job) {
-      lines.push(state.jobs.length === 0 && i === 0 ? pad(" no jobs in crons/", width) : " ".repeat(width));
+      if (visible.length === 0 && i === 0) {
+        const message = state.filter.length > 0 ? ` no jobs match "${state.filter}"` : " no jobs in crons/";
+        lines.push(pad(message, width));
+      } else {
+        lines.push(" ".repeat(width));
+      }
       continue;
     }
     lines.push(jobRow(job, i === selectedIndex, width, nowMs, color));
   }
+  lines.push(detailLine(selectedJob(state), nowMs, width));
   lines.push(rule(width));
 
   const activityRows = activityRowsForHeight(height);
   if (activityRows > 0) {
-    lines.push(
-      pad(
-        state.drift.length > 0 ? ` Drift (${state.drift.length}) · Activity` : " Activity",
-        width,
-      ),
-    );
-    const drift = state.drift.slice(0, activityRows);
-    for (const line of drift) lines.push(pad(`  ${line}`, width));
-    const entries = state.activity.slice(0, activityRows - drift.length);
-    for (const entry of entries) lines.push(activityRow(entry, width));
-    const used = drift.length + entries.length;
-    for (let i = used; i < activityRows; i++) lines.push(" ".repeat(width));
-    lines.push(rule(width));
+    if (state.detail) {
+      lines.push(pad(" Detail · v close", width));
+      const body = detailBody(selectedJob(state), nowMs, width);
+      for (let i = 0; i < activityRows; i++) lines.push(body[i] ?? " ".repeat(width));
+      lines.push(rule(width));
+    } else {
+      lines.push(
+        pad(
+          state.drift.length > 0 ? ` Drift (${state.drift.length}) · Activity` : " Activity",
+          width,
+        ),
+      );
+      const drift = state.drift.slice(0, activityRows);
+      for (const line of drift) lines.push(pad(`  ${line}`, width));
+      const entries = state.activity.slice(0, activityRows - drift.length);
+      for (const entry of entries) lines.push(activityRow(entry, width));
+      const used = drift.length + entries.length;
+      for (let i = used; i < activityRows; i++) lines.push(" ".repeat(width));
+      lines.push(rule(width));
+    }
   }
 
-  lines.push(pad(keysLine(width), width));
-  lines.push(statusLine(state, width));
+  lines.push(pad(keysLine(state, width), width));
+  lines.push(statusLine(state, width, nowMs));
   return lines.slice(0, height);
 }

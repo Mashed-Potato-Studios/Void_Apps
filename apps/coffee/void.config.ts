@@ -3,10 +3,6 @@ import { defineConfig } from 'void/config';
 export default defineConfig({
   target: 'cloudflare',
   routing: {
-    revalidate: {
-      '/': 60,
-      '/dashboard': 0,
-    },
     headers: {
       '/assets/*': ['Cache-Control: public, max-age=31536000, immutable'],
       '/*': [
@@ -22,7 +18,7 @@ export default defineConfig({
     meta: [
       { charset: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { name: 'description', content: 'Crew Coffee — Void Quickstart demo storefront' },
+      { name: 'description', content: 'Crew Coffee — a cozy corner café, brewed to real recipes' },
     ],
   },
   worker: {

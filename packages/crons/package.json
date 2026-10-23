@@ -1,8 +1,17 @@
 {
   "name": "void-crons",
-  "version": "0.2.0",
-  "description": "Cron job scanner, manifest, local trigger, activity store, and dev panel for Void Cloud crons/",
+  "version": "0.4.0",
+  "description": "Cron job scanner, manifest, local trigger, activity store, TUI, and Worker-safe runtime adapters for Void Cloud crons/",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mashed-Potato-Studios/Void_Apps.git",
+    "directory": "packages/crons"
+  },
+  "homepage": "https://github.com/Mashed-Potato-Studios/Void_Apps/tree/main/packages/crons#readme",
+  "bugs": {
+    "url": "https://github.com/Mashed-Potato-Studios/Void_Apps/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.6"
@@ -15,9 +24,18 @@
     "./ui": "./src/ui/CronPanel.tsx",
     "./scan": "./src/scan.ts",
     "./manifest": "./src/manifest.ts",
+    "./schedule": "./src/schedule.ts",
+    "./types": "./src/types.ts",
+    "./runtime": "./src/runtime.ts",
     "./cli": "./src/cli.ts",
     "./tui": "./src/tui/run.ts",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./d1": "./src/d1.ts",
+    "./queue": "./src/queue.ts",
+    "./durable": "./src/durable.ts",
+    "./live": "./src/live.ts",
+    "./evidence": "./src/evidence.ts",
+    "./production": "./src/production.ts"
   },
   "bin": {
     "void-crons": "bin/void-crons.mjs"
@@ -25,7 +43,8 @@
   "files": [
     "dist",
     "bin",
-    "README.md"
+    "README.md",
+    "migrations"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -43,10 +62,18 @@
       "./ui": "./dist/ui/CronPanel.js",
       "./scan": "./dist/scan.js",
       "./manifest": "./dist/manifest.js",
+      "./types": "./dist/types.js",
+      "./runtime": "./dist/runtime.js",
       "./schedule": "./dist/schedule.js",
       "./cli": "./dist/cli.js",
       "./tui": "./dist/tui/run.js",
-      "./package.json": "./package.json"
+      "./package.json": "./package.json",
+      "./d1": "./dist/d1.js",
+      "./queue": "./dist/queue.js",
+      "./durable": "./dist/durable.js",
+      "./live": "./dist/live.js",
+      "./evidence": "./dist/evidence.js",
+      "./production": "./dist/production.js"
     }
   },
   "peerDependencies": {
@@ -68,10 +95,10 @@
     "@void-monorepo/config": "workspace:*",
     "@void-monorepo/types": "workspace:*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "typescript": "^5.7.3"
+    "react-dom": "^18.3.1"
   },
   "dependencies": {
-    "cron-parser": "^5"
+    "cron-parser": "^5",
+    "typescript": "^5.7.3"
   }
 }

@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { scanCronFiles } from "./scan.js";
-import type { CronJob, CronManifest } from "./types.js";
+import type { CronJob, CronManifest, CronSchedule } from "./types.js";
 
 /** Drift lines between a stored manifest and a fresh scan — active sets only, never emittedAt.
  *  Expressions compare as sets (order-insensitive), disabled names from the stored manifest
@@ -54,11 +54,15 @@ export function buildCronManifest(
   const deployable = jobs.filter((j) => j.status === "active");
   const expressions = [...new Set(deployable.flatMap((j) => j.expressions))].sort();
   const scheduleCount = deployable.reduce((n, j) => n + j.expressions.length, 0);
+  const schedules: CronSchedule[] = deployable
+    .flatMap((j) => j.expressions.map((cron) => ({ name: j.name, cron })))
+    .sort((a, b) => (a.name === b.name ? (a.cron < b.cron ? -1 : 1) : a.name < b.name ? -1 : 1));
   return {
     format: 1,
     app: basename(appRoot),
     emittedAt: new Date().toISOString(),
     jobs,
+    schedules,
     expressionCount: expressions.length,
     scheduleCount,
     disabled: jobs.filter((j) => j.status === "disabled").map((j) => j.name),

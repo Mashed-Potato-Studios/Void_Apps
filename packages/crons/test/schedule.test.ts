@@ -88,7 +88,7 @@ function okFetch(calls: { url: string; cron: string }[]): typeof fetch {
 
 describe("runScheduleOnce", () => {
   // pinned Review Focus input 5: disabled job → skipped, never fired
-  it("fires catch-up per distinct expression, skips disabled, writes activity log", async () => {
+  it("blocks shared catch-up when a sibling is disabled", async () => {
     const app = makeSchedApp({ "heartbeat.ts": SHARED, "cleanup.ts": SHARED });
     const calls: { url: string; cron: string }[] = [];
     const res = await runScheduleOnce(app, {
@@ -97,23 +97,22 @@ describe("runScheduleOnce", () => {
       disabled: ["cleanup"],
       nowMs: Date.UTC(2026, 9, 18, 10, 40, 0),
     });
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]?.cron, "0 * * * *");
-    assert.equal(res.fired.length, 1);
-    assert.equal(res.fired[0]?.status, "success");
-    assert.deepEqual(res.skipped, [
-      { cron: "0 * * * *", jobName: "cleanup", reason: 'job "cleanup" is disabled' },
-    ]);
+    assert.equal(calls.length, 0);
+    assert.equal(res.fired.length, 0);
+    assert.equal(res.skipped.length, 1);
+    assert.equal(res.skipped[0]?.jobName, "expression:0 * * * *");
+    assert.match(res.skipped[0]!.reason, /fans out.*cleanup.*heartbeat.*disabled/);
     const log = readActivityLog(app);
-    assert.equal(log.length, 1);
-    assert.equal(log[0]?.cron, "0 * * * *");
+    assert.equal(log.length, 0);
     rmSync(app, { recursive: true, force: true });
   });
 
   it("out-of-window and invalid jobs contribute nothing", async () => {
     const app = makeSchedApp({
       "broken.ts": "export default async () => {};\n",
-      "late.ts": `export const cron = ['0 2 * * 1'];\nexport default async () => {};\n`,
+      // Cloudflare day-of-week: 2 = Monday. Monday 02:00 lies ahead of the
+      // Sunday 10:00 checkpoint, so it falls outside the trailing window.
+      "late.ts": `export const cron = ['0 2 * * 2'];\nexport default async () => {};\n`,
     });
     const calls: { url: string; cron: string }[] = [];
     // now = Sunday 10:00 → Monday 02:00 due lies ahead of [now-24h, now] window

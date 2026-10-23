@@ -22,12 +22,30 @@ A production-ready monorepo structure built for **[Void Cloud](https://void.clou
 │   │   ├── middleware/          # API logger & auth middleware
 │   │   ├── vite.config.ts
 │   │   └── void.json
-│   └── admin/                   # Operations & Analytics Portal
-│       ├── pages/               # Admin SSR console
-│       ├── routes/              # Admin stats API
-│       ├── vite.config.ts
-│       └── void.json
+│   ├── admin/                   # Operations & Analytics Portal
+│   │   ├── pages/               # Admin SSR console
+│   │   ├── routes/              # Admin stats API
+│   │   ├── vite.config.ts
+│   │   └── void.json
+│   ├── coffee/                  # Crew Coffee — café storefront (React Pages)
+│   │   ├── pages/               # Live menu, cart, checkout
+│   │   ├── routes/api/          # Checkout proxy + health
+│   │   ├── env.ts               # COFFEE_API_URL, COFFEE_ADMIN_URL
+│   │   └── void.config.ts
+│   ├── coffee-api/              # Coffee backend — D1, orders, crons
+│   │   ├── db/                  # Schema, migrations, seed
+│   │   ├── routes/api/          # Public + bearer-gated admin endpoints
+│   │   ├── crons/               # Four scheduled jobs (D1 run history)
+│   │   ├── src/jobs/            # Shared job logic
+│   │   └── env.ts               # COFFEE_ADMIN_TOKEN, CORS origins
+│   └── coffee-admin/            # Coffee back office (Basic Auth + BFF proxy)
+│       ├── pages/               # Overview, orders, menu, cron console
+│       ├── routes/api/admin/    # Server-side token proxy
+│       ├── middleware/          # HTTP Basic Auth gate
+│       └── env.ts
 ├── packages/
+│   ├── coffee-contract/         # Coffee DTOs + typed HTTP client
+│   ├── coffee-theme/            # Café CSS, photography, recipes
 │   ├── db/                      # Centralized Drizzle ORM schemas (D1 SQLite / PG), client, seeds
 │   ├── auth/                    # Better-Auth integration, session helpers, RBAC permissions
 │   ├── ui/                      # Shared React UI component library & Void design tokens
@@ -75,7 +93,32 @@ pnpm run dev:api
 
 # Admin operations portal (port 5174)
 pnpm run dev:admin
+
+# Crew Coffee — run all three (API 5175, café 5173, admin 5174)
+pnpm run dev:coffee
 ```
+
+### Crew Coffee architecture
+
+The café is split into three deployables that share
+`@void-monorepo/coffee-contract` and `@void-monorepo/coffee-theme`:
+
+- **Café** (`apps/coffee`) renders the live menu and posts checkouts to its own
+  `/api/checkout` proxy.
+- **API** (`apps/coffee-api`) owns D1, inventory, orders, sales aggregates, and
+  four cron jobs. Admin routes require a bearer token.
+- **Admin** (`apps/coffee-admin`) is Basic-Auth gated and reads/writes the API
+  via a server-side BFF proxy; the token never reaches the browser.
+
+First run:
+
+```bash
+pnpm --filter @void-monorepo/coffee-api exec void db migrate
+pnpm --filter @void-monorepo/coffee-api exec void db seed
+pnpm run dev:coffee
+```
+
+See each app's README for env values and deployment secrets.
 
 ---
 

@@ -1,15 +1,16 @@
 import { statSync } from "node:fs";
 import { emitKeypressEvents } from "node:readline";
 import { emitCronManifest } from "../manifest.js";
-import { runScheduleOnce, type ScheduleRun } from "../schedule.js";
+import { collectScheduleTargets, runScheduleOnce, tickSchedule, type ScheduleRun } from "../schedule.js";
 import { appendActivityLog, type ActivityStoreMode } from "../store.js";
 import { triggerJob } from "../trigger.js";
-import type { CronTriggerResult } from "../types.js";
+import type { CronJob, CronTriggerOptions, CronTriggerResult } from "../types.js";
 import { loadSnapshot } from "./data.js";
 import { keyToMsg, type KeyPress } from "./keys.js";
 import {
   createState,
   reduce,
+  selectedJob,
   type JobView,
   type Msg,
   type Snapshot,
@@ -17,8 +18,9 @@ import {
   type TuiState,
 } from "./model.js";
 import { render } from "./render.js";
+import { startWatcher, type WatcherHandle } from "./watch.js";
 
-export interface TuiOptions {
+export interface TuiOptions extends Pick<CronTriggerOptions, "transport" | "allowRemote" | "productionEvidence" | "cronSecret" | "bindingMode" | "allowRemoteBindings"> {
   appPath: string;
   origin: string;
   storeMode: ActivityStoreMode;
@@ -31,7 +33,7 @@ export interface TuiOptions {
 
 export interface TuiActions {
   load(disabled?: string[]): Snapshot;
-  trigger(job: JobView, signal: AbortSignal): Promise<CronTriggerResult[]>;
+  trigger(job: JobView, signal: AbortSignal, jobs?: readonly CronJob[]): Promise<CronTriggerResult[]>;
   emit(disabled: string[]): { path: string };
   catchUp(disabled: string[], signal: AbortSignal): Promise<ScheduleRun>;
 }
@@ -67,6 +69,8 @@ export interface TuiDeps {
   signals?: TuiSignals;
   setInterval?: (fn: () => void, ms: number) => unknown;
   clearInterval?: (timer: unknown) => void;
+  tickSchedule?: typeof tickSchedule;
+  watch?: (appPath: string, onChange: () => void) => WatcherHandle;
 }
 
 const ENTER = "\u001b[?1049h\u001b[?25l";
@@ -77,8 +81,10 @@ function createActions(opts: TuiOptions): TuiActions {
   return {
     load: (disabled) =>
       loadSnapshot(opts.appPath, { disabled, tz: opts.tz, storeMode: opts.storeMode }),
-    trigger: async (job, signal) => {
+    trigger: async (job, signal, jobs) => {
       const results = await triggerJob(job, {
+        ...opts,
+        jobs: jobs ?? loadSnapshot(opts.appPath).jobs,
         origin: opts.origin,
         ...(opts.devToken ? { devToken: opts.devToken } : {}),
         timeoutMs: opts.timeoutMs,
@@ -92,6 +98,7 @@ function createActions(opts: TuiOptions): TuiActions {
     emit: (disabled) => emitCronManifest(opts.appPath, { disabled }),
     catchUp: (disabled, signal) =>
       runScheduleOnce(opts.appPath, {
+        ...opts,
         origin: opts.origin,
         ...(opts.devToken ? { devToken: opts.devToken } : {}),
         disabled,
@@ -104,6 +111,10 @@ function createActions(opts: TuiOptions): TuiActions {
   };
 }
 
+function activeTargets(state: TuiState): Map<string, string> {
+  return collectScheduleTargets(state.jobs, new Set(state.disabled)).active;
+}
+
 export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<number> {
   const stdin = deps.stdin ?? process.stdin;
   const stdout = deps.stdout ?? process.stdout;
@@ -111,6 +122,9 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
   const now = deps.now ?? Date.now;
   const actions = deps.actions ?? createActions(opts);
   const color = opts.color ?? !process.env["NO_COLOR"];
+  const tickImpl = deps.tickSchedule ?? tickSchedule;
+  const watchImpl =
+    deps.watch ?? ((appPath: string, onChange: () => void) => startWatcher(appPath, onChange));
 
   if (!stdin.isTTY || !stdout.isTTY) {
     stderr.write("error: void-crons ui needs an interactive terminal (stdin/stdout TTY)\n");
@@ -157,6 +171,11 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
     let settled = false;
     let busy = false;
     let aborter: AbortController | null = null;
+    let loopAborter: AbortController | null = null;
+    let loopTickInFlight = false;
+    let loopGeneration = 0;
+    let watcher: WatcherHandle | null = null;
+    let watchDirty = false;
     let timer: unknown;
     let fatalInstalled = false;
     const clearTimer =
@@ -170,6 +189,9 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       if (settled) return;
       settled = true;
       if (timer !== undefined) clearTimer(timer);
+      watcher?.close();
+      loopAborter?.abort();
+      aborter?.abort();
       stdin.off("keypress", onKey);
       signals.off("SIGINT", onSigint);
       signals.off("SIGTERM", onSigterm);
@@ -212,8 +234,84 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       }
     };
 
+    const runLoopTick = async (): Promise<void> => {
+      if (!state.loop.running || busy || loopTickInFlight || settled) return;
+      const active = activeTargets(state);
+      if (active.size === 0) {
+        state = reduce(state, {
+          type: "loop-result",
+          checkpointMs: now(),
+          firedMinutes: new Map(state.loop.firedMinutes),
+          fired: 0,
+        });
+        draw();
+        return;
+      }
+
+      const generation = loopGeneration;
+      loopTickInFlight = true;
+      const controller = new AbortController();
+      loopAborter = controller;
+      try {
+        const result = await tickImpl(
+          {
+            checkpointMs: state.loop.checkpointMs,
+            firedMinutes: new Map(state.loop.firedMinutes),
+          },
+          { active, skipped: [] },
+          {
+            ...opts,
+            jobs: state.jobs,
+            origin: opts.origin,
+            ...(opts.devToken ? { devToken: opts.devToken } : {}),
+            nowMs: now(),
+            tz: opts.tz,
+            timeoutMs: opts.timeoutMs,
+            maxAttempts: opts.retries + 1,
+            store: opts.storeMode,
+            appendActivity: { appRoot: opts.appPath },
+            signal: controller.signal,
+          },
+        );
+        if (settled || !state.loop.running || generation !== loopGeneration) return;
+        state = reduce(state, {
+          type: "loop-result",
+          checkpointMs: result.state.checkpointMs,
+          firedMinutes: result.state.firedMinutes,
+          fired: result.fired.length,
+        });
+        if (result.fired.length > 0) {
+          state = reduce(state, {
+            type: "loaded",
+            snapshot: actions.load([...state.disabled]),
+          });
+        }
+        draw();
+      } catch (error) {
+        if (settled || controller.signal.aborted || generation !== loopGeneration) return;
+        state = reduce(state, {
+          type: "loop-error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+        draw();
+      } finally {
+        loopTickInFlight = false;
+        if (loopAborter === controller) loopAborter = null;
+      }
+    };
+
+    const tick = (): void => {
+      if (settled) return;
+      draw();
+      if (watchDirty && !busy) {
+        watchDirty = false;
+        refresh("info", "rescanned");
+      }
+      void runLoopTick();
+    };
+
     const actTrigger = async (): Promise<void> => {
-      const job = state.jobs[state.selected];
+      const job = selectedJob(state);
       if (!job) {
         setStatus("error", "no job selected");
         return;
@@ -231,11 +329,13 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       state = reduce(state, { type: "busy", label: `trigger ${job.name}` });
       draw();
       try {
-        const results = await actions.trigger(job, aborter.signal);
+        const results = await actions.trigger(job, aborter.signal, state.jobs);
         if (settled) return;
         const fired = results.filter((result) => result.ok).length;
         const failed = results.filter((result) => !result.ok && !result.skipped);
-        if (failed.length === 0) {
+        if (results.every((result) => result.skipped)) {
+          refresh("error", results[0]?.reason ?? "dispatch skipped");
+        } else if (failed.length === 0) {
           refresh("success", `fired ${job.name} (${fired}/${results.length})`);
         } else {
           const reason = failed[0]?.entry?.error ?? failed[0]?.reason ?? "unknown";
@@ -274,14 +374,26 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
     };
 
     const onKey = (str: string | undefined, key: KeyPress | undefined): void => {
-      const msg: Msg | null = keyToMsg(str, key);
+      const msg: Msg | null = keyToMsg(str, key, state.filterInput);
       if (!msg) return;
       if (msg.type === "quit") {
         aborter?.abort();
+        loopAborter?.abort();
         cleanup(0);
         return;
       }
       if (busy) return;
+      if (msg.type === "loop-toggle") {
+        loopGeneration++;
+        if (state.loop.running) {
+          loopAborter?.abort();
+          state = reduce(state, { type: "loop-stop" });
+        } else {
+          state = reduce(state, { type: "loop-start", nowMs: now() });
+        }
+        draw();
+        return;
+      }
       state = reduce(state, msg);
       draw();
       if (msg.type === "trigger") void actTrigger();
@@ -301,16 +413,19 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
 
     const onSigint = (): void => {
       aborter?.abort();
+      loopAborter?.abort();
       cleanup(130);
     };
 
     const onSigterm = (): void => {
       aborter?.abort();
+      loopAborter?.abort();
       cleanup(143);
     };
 
     const onFatal = (error: unknown): void => {
       aborter?.abort();
+      loopAborter?.abort();
       stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
       cleanup(1);
     };
@@ -325,10 +440,31 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       signals.on("SIGINT", onSigint);
       signals.on("SIGTERM", onSigterm);
       signals.on("SIGWINCH", onResize);
+
+      try {
+        watcher = watchImpl(opts.appPath, () => {
+          watchDirty = true;
+        });
+        if (watcher.failed) {
+          state = reduce(state, {
+            type: "status",
+            kind: "info",
+            message: "watch unavailable — r to refresh",
+          });
+        }
+      } catch {
+        watcher = null;
+        state = reduce(state, {
+          type: "status",
+          kind: "info",
+          message: "watch unavailable — r to refresh",
+        });
+      }
+
       process.once("uncaughtException", onFatal);
       process.once("unhandledRejection", onFatal);
       fatalInstalled = true;
-      timer = (deps.setInterval ?? setInterval)(draw, TICK_MS);
+      timer = (deps.setInterval ?? setInterval)(tick, TICK_MS);
       draw();
     } catch (error) {
       stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);

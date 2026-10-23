@@ -280,7 +280,7 @@ describe("trigger abort", () => {
     assert.equal(fetches, 0);
     assert.equal(result.ok, false);
     assert.equal(result.httpStatus, 0);
-    assert.equal(result.attempts, 1);
+    assert.equal(result.attempts, 0);
     assert.equal(result.entry, undefined);
     assert.match(result.reason ?? "", /aborted/);
   });
@@ -387,6 +387,7 @@ describe("tui runner", () => {
         stdout: output as never,
         stderr: { write: (line: string) => errors.push(line) },
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
       },
     );
     assert.equal(code, 2);
@@ -411,6 +412,7 @@ describe("tui runner", () => {
         stdout: output as never,
         stderr: { write: (line: string) => errors.push(line) },
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -433,6 +435,7 @@ describe("tui runner", () => {
         stdout: output as never,
         stderr: { write: (line: string) => errors.push(line) },
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -454,6 +457,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -488,6 +492,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -520,6 +525,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -545,6 +551,7 @@ describe("tui runner", () => {
         stdin: input as never,
         stdout: output as never,
         signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
         setInterval: () => 1,
         clearInterval: () => {},
         now: () => 60_000,
@@ -645,5 +652,620 @@ describe("ui command", () => {
     } finally {
       rmSync(app, { recursive: true, force: true });
     }
+  });
+});
+
+import {
+  nextActiveFireMs,
+  selectedJob,
+  visibleJobs,
+} from "../src/tui/model.ts";
+
+describe("tui live-ops model", () => {
+  it("filters by name, path, or expression", () => {
+    const s = state({
+      jobs: [job("alpha"), job("beta", "active", ["*/15 * * * *"]), job("gamma")],
+      filter: "*/15",
+    });
+    assert.deepEqual(visibleJobs(s).map((j) => j.name), ["beta"]);
+
+    assert.deepEqual(
+      visibleJobs({ ...s, filter: "crons/gamma" }).map((j) => j.name),
+      ["gamma"],
+    );
+    assert.deepEqual(
+      visibleJobs({ ...s, filter: "ALP" }).map((j) => j.name),
+      ["alpha"],
+    );
+  });
+
+  it("sorts by next fire, name, and status", () => {
+    const jobs = [
+      { ...job("zeta"), nextFireMs: 300 },
+      { ...job("alpha"), nextFireMs: 100 },
+      { ...job("beta", "disabled"), nextFireMs: null },
+      { ...job("broken", "invalid"), nextFireMs: null },
+    ];
+    assert.deepEqual(
+      visibleJobs(state({ jobs, sort: "next" })).map((j) => j.name),
+      ["alpha", "zeta", "beta", "broken"],
+    );
+    assert.deepEqual(
+      visibleJobs(state({ jobs, sort: "name" })).map((j) => j.name),
+      ["alpha", "beta", "broken", "zeta"],
+    );
+    assert.deepEqual(
+      visibleJobs(state({ jobs, sort: "status" })).map((j) => j.name),
+      ["alpha", "zeta", "beta", "broken"],
+    );
+  });
+
+  it("targets the visible selection, not the raw index", () => {
+    const s = state({
+      jobs: [job("alpha"), job("beta"), job("gamma")],
+      filter: "gamma",
+    });
+    const selected = selectedJob(s);
+    assert.equal(selected?.name, "gamma");
+
+    const after = reduce(s, { type: "toggle" });
+    assert.equal(after.jobs.find((j) => j.name === "gamma")?.status, "disabled");
+    assert.equal(after.jobs.find((j) => j.name === "alpha")?.status, "active");
+  });
+
+  it("preserves the selected job by path across loaded snapshots", () => {
+    const s = state({
+      jobs: [job("alpha"), job("beta"), job("gamma")],
+      selected: 1,
+    });
+    assert.equal(selectedJob(s)?.name, "beta");
+
+    const loaded = reduce(s, {
+      type: "loaded",
+      snapshot: snapshot([job("aardvark"), job("gamma"), job("beta"), job("alpha")]),
+    });
+    assert.equal(selectedJob(loaded)?.name, "beta");
+  });
+
+  it("tracks loop start, results, and stop", () => {
+    let s = state();
+    s = reduce(s, { type: "loop-start", nowMs: 1_000 });
+    assert.equal(s.loop.running, true);
+    assert.equal(s.loop.checkpointMs, 1_000);
+
+    s = reduce(s, {
+      type: "loop-result",
+      checkpointMs: 61_000,
+      firedMinutes: new Map([["* * * * *", 1]]),
+      fired: 2,
+    });
+    assert.equal(s.loop.checkpointMs, 61_000);
+    assert.equal(s.loop.firedTotal, 2);
+
+    s = reduce(s, { type: "loop-error", message: "boom" });
+    assert.equal(s.loop.running, false);
+    assert.equal(s.status?.kind, "error");
+
+    s = reduce(s, { type: "loop-start", nowMs: 10_000 });
+    s = reduce(s, { type: "loop-stop" });
+    assert.equal(s.loop.running, false);
+    assert.equal(s.loop.firedTotal, 0);
+  });
+
+  it("edits, applies, and clears the filter", () => {
+    let s = state({ selected: 2 });
+    s = reduce(s, { type: "filter-open" });
+    assert.equal(s.filterInput, true);
+
+    s = reduce(s, { type: "filter-char", char: "b" });
+    s = reduce(s, { type: "filter-char", char: "e" });
+    assert.equal(s.filter, "be");
+    assert.equal(s.selected, 0);
+
+    s = reduce(s, { type: "filter-backspace" });
+    assert.equal(s.filter, "b");
+
+    s = reduce(s, { type: "filter-apply" });
+    assert.equal(s.filterInput, false);
+    assert.equal(s.filter, "b");
+
+    s = reduce(s, { type: "filter-clear" });
+    assert.equal(s.filter, "");
+    assert.equal(s.selected, 0);
+  });
+
+  it("cycles sort, toggles detail, and computes the next active fire", () => {
+    let s = state({ sort: "next" });
+    s = reduce(s, { type: "sort-cycle" });
+    assert.equal(s.sort, "name");
+    s = reduce(s, { type: "sort-cycle" });
+    assert.equal(s.sort, "status");
+    s = reduce(s, { type: "sort-cycle" });
+    assert.equal(s.sort, "next");
+
+    s = reduce(s, { type: "detail-toggle" });
+    assert.equal(s.detail, true);
+    s = reduce(s, { type: "escape" });
+    assert.equal(s.detail, false);
+
+    const withFires = state({
+      jobs: [
+        { ...job("a"), nextFireMs: 5_000 },
+        { ...job("b"), nextFireMs: 2_000 },
+        job("c", "disabled"),
+      ],
+    });
+    assert.equal(nextActiveFireMs(withFires), 2_000);
+  });
+});
+
+import { keyToMsg as keys } from "../src/tui/keys.ts";
+
+describe("tui live-ops keys", () => {
+  it("maps new normal-mode keys", () => {
+    assert.deepEqual(keys("s", { name: "s" }), { type: "loop-toggle" });
+    assert.deepEqual(keys("/", { name: "/" }), { type: "filter-open" });
+    assert.deepEqual(keys("o", { name: "o" }), { type: "sort-cycle" });
+    assert.deepEqual(keys("v", { name: "v" }), { type: "detail-toggle" });
+    assert.deepEqual(keys(undefined, { name: "escape" }), { type: "escape" });
+  });
+
+  it("captures text while filtering", () => {
+    assert.deepEqual(keys("a", { name: "a" }, true), { type: "filter-char", char: "a" });
+    assert.deepEqual(keys(" ", { name: "space" }, true), { type: "filter-char", char: " " });
+    assert.deepEqual(keys(undefined, { name: "backspace" }, true), { type: "filter-backspace" });
+    assert.deepEqual(keys("\r", { name: "return" }, true), { type: "filter-apply" });
+    assert.deepEqual(keys(undefined, { name: "escape" }, true), { type: "filter-clear" });
+    assert.deepEqual(keys(undefined, { name: "up" }, true), null);
+    assert.deepEqual(keys("\u0003", { name: "c", ctrl: true }, true), { type: "quit" });
+  });
+});
+
+describe("tui live-ops render", () => {
+  it("shows loop state, sort, and the detail line", () => {
+    let s = state();
+    let text = render(s, 60_000, false).join("\n");
+    assert.match(text, /loop off/);
+    assert.match(text, /sort next/);
+    assert.match(text, /crons\/alpha\.ts/);
+
+    s = reduce(s, { type: "loop-start", nowMs: 60_000 });
+    s = reduce(s, {
+      type: "loop-result",
+      checkpointMs: 61_000,
+      firedMinutes: new Map(),
+      fired: 2,
+    });
+    text = render(s, 62_000, false).join("\n");
+    assert.match(text, /loop LIVE · 2 fired/);
+    assert.match(text, /status: live · 2 fired/);
+  });
+
+  it("renders filter input and the no-match state", () => {
+    let s = state({ selected: 2 });
+    s = reduce(s, { type: "filter-open" });
+    s = reduce(s, { type: "filter-char", char: "z" });
+    s = reduce(s, { type: "filter-char", char: "z" });
+    const text = render(s, 60_000, false).join("\n");
+    assert.match(text, /filter: zz/);
+    assert.match(text, /enter apply/);
+    assert.match(text, /no jobs match "zz"/);
+    assert.match(text, /no job selected/);
+  });
+
+  it("renders the detail pane instead of activity", () => {
+    const s = reduce(state(), { type: "detail-toggle" });
+    const text = render(s, 60_000, false).join("\n");
+    assert.match(text, /Detail · v close/);
+    assert.match(text, /path: crons\/alpha\.ts/);
+    assert.match(text, /expressions: \* \* \* \* \*/);
+    assert.ok(!text.includes(" Activity"));
+  });
+
+  it("keeps the detail line inside narrow widths", () => {
+    for (const [width, height] of [
+      [88, 17],
+      [39, 13],
+    ] as const) {
+      const lines = render(state({ width, height }), 60_000, false);
+      assert.equal(lines.length, height);
+      assert.ok(lines.every((line) => [...line].length <= width));
+      assert.ok(lines.some((line) => line.includes("crons/alpha.ts")));
+    }
+  });
+});
+
+import { initScheduleState, tickSchedule } from "../src/schedule.ts";
+
+describe("tickSchedule abort", () => {
+  it("does not fetch when the loop signal is already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let fetches = 0;
+    const state = initScheduleState(Date.UTC(2026, 0, 1, 0, 0));
+    const result = await tickSchedule(
+      state,
+      { active: new Map([["* * * * *", "alpha"]]), skipped: [] },
+      {
+        origin: "http://localhost:5173",
+        nowMs: state.checkpointMs + 60_000,
+        signal: controller.signal,
+        fetchImpl: (async () => {
+          fetches++;
+          return { ok: true, status: 200 } as Response;
+        }) as typeof fetch,
+      },
+    );
+    assert.equal(fetches, 0);
+    assert.equal(result.fired.length, 0);
+  });
+});
+
+import { startWatcher, type WatchHandle, type WatchImpl } from "../src/tui/watch.ts";
+
+class FakeWatch implements WatchHandle {
+  closed = false;
+  private errors: Array<() => void> = [];
+  private readonly listener: (event: string, filename: string | null) => void;
+  constructor(listener: (event: string, filename: string | null) => void) {
+    this.listener = listener;
+  }
+  on(_event: "error", listener: () => void): this {
+    this.errors.push(listener);
+    return this;
+  }
+  close(): void {
+    this.closed = true;
+  }
+  emit(filename: string | null): void {
+    this.listener("change", filename);
+  }
+  emitError(): void {
+    for (const listener of this.errors) listener();
+  }
+}
+
+function fakeWatch(): { impl: WatchImpl; created: FakeWatch[] } {
+  const created: FakeWatch[] = [];
+  const impl: WatchImpl = (_path, _options, listener) => {
+    const watch = new FakeWatch(listener);
+    created.push(watch);
+    return watch;
+  };
+  return { impl, created };
+}
+
+describe("tui watcher", () => {
+  it("debounces cron changes into one callback", async () => {
+    const { impl, created } = fakeWatch();
+    let calls = 0;
+    const handle = startWatcher("/app", () => calls++, { debounceMs: 10, watchImpl: impl });
+    created[0]?.emit("cleanup.ts");
+    created[0]?.emit("heartbeat.ts");
+    created[0]?.emit("reports.ts");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(calls, 1);
+    handle.close();
+  });
+
+  it("ignores activity writes but reacts to the manifest", async () => {
+    const { impl, created } = fakeWatch();
+    let calls = 0;
+    const handle = startWatcher("/app", () => calls++, { debounceMs: 5, watchImpl: impl });
+    created[1]?.emit("void.crons.activity.sqlite");
+    created[1]?.emit("void.crons.activity.jsonl");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls, 0);
+
+    created[1]?.emit("void.crons.json");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls, 1);
+    handle.close();
+  });
+
+  it("closes both watchers and survives watch errors", () => {
+    const { impl, created } = fakeWatch();
+    const handle = startWatcher("/app", () => {}, { watchImpl: impl });
+    created[0]?.emitError();
+    assert.equal(handle.failed, true);
+    handle.close();
+    assert.equal(created[0]?.closed, true);
+    assert.equal(created[1]?.closed, true);
+
+    const failed = startWatcher("/app", () => {}, {
+      watchImpl: () => {
+        throw new Error("watch failed");
+      },
+    });
+    assert.equal(failed.failed, true);
+    failed.close();
+  });
+});
+
+import type { WatcherHandle } from "../src/tui/watch.ts";
+
+describe("tui live-ops runner", () => {
+  it("starts and stops the loop on s", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let ticks = 0;
+    const tickImpl: typeof tickSchedule = async (_state, _targets, opts) => {
+      ticks++;
+      return {
+        state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+        fired: [],
+        skipped: [],
+      };
+    };
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 1);
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 1);
+
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("suppresses loop ticks while a manual action is busy", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let ticks = 0;
+    let finish: (() => void) | undefined;
+    const tickImpl: typeof tickSchedule = async (_state, _targets, opts) => {
+      ticks++;
+      return {
+        state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+        fired: [],
+        skipped: [],
+      };
+    };
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          trigger: async () => {
+            await new Promise<void>((resolve) => {
+              finish = resolve;
+            });
+            return [];
+          },
+        }),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    input.press("\r", { name: "return" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 0);
+
+    finish?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(ticks, 1);
+
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("aborts an in-flight loop tick on quit", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let seenSignal: AbortSignal | undefined;
+    const tickImpl: typeof tickSchedule = (_state, _targets, opts) =>
+      new Promise((resolve) => {
+        seenSignal = opts.signal;
+        void resolve;
+      });
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(seenSignal?.aborted, false);
+
+    input.press("q", { name: "q" });
+    assert.equal(seenSignal?.aborted, true);
+    assert.equal(await promise, 0);
+  });
+
+  it("refreshes when the watcher reports a change", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let fire: (() => void) | undefined;
+    let loads = 0;
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          load: () => {
+            loads++;
+            return snapshot();
+          },
+        }),
+        watch: (_appPath, onChange): WatcherHandle => {
+          fire = onChange;
+          return { close() {}, failed: false };
+        },
+      },
+    );
+
+    assert.equal(loads, 1);
+    fire?.();
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(loads, 2);
+
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+});
+
+describe("tui live-ops race fixes", () => {
+  const firedEntry = {
+    id: "x",
+    jobName: "alpha",
+    cron: "* * * * *",
+    scheduledTime: new Date(0).toISOString(),
+    finishedAt: new Date(0).toISOString(),
+    durationMs: 1,
+    status: "success" as const,
+    source: "local" as const,
+  };
+
+  it("discards a tick that resolves after stop then restart", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let finish: (() => void) | undefined;
+    const tickImpl: typeof tickSchedule = (_state, _targets, opts) =>
+      new Promise((resolve) => {
+        finish = () =>
+          resolve({
+            state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+            fired: [firedEntry],
+            skipped: [],
+          });
+      });
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("s", { name: "s" });
+    tickFn?.();
+    input.press("s", { name: "s" });
+    input.press("s", { name: "s" });
+    finish?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const frame = output.chunks.at(-1) ?? "";
+    assert.match(frame, /loop LIVE · 0 fired/);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("advances the checkpoint with zero active targets", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    let tickFn: (() => void) | undefined;
+    let current = 0;
+    let checkpoint: number | undefined;
+    const tickImpl: typeof tickSchedule = async (state, _targets, opts) => {
+      checkpoint = state.checkpointMs;
+      return {
+        state: { checkpointMs: opts.nowMs, firedMinutes: new Map() },
+        fired: [],
+        skipped: [],
+      };
+    };
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        setInterval: (fn) => {
+          tickFn = fn;
+          return 1;
+        },
+        clearInterval: () => {},
+        now: () => current,
+        actions: fakeActions({ load: () => snapshot([job("alpha")]) }),
+        tickSchedule: tickImpl,
+        watch: () => ({ close() {}, failed: false }),
+      },
+    );
+
+    input.press("d", { name: "d" });
+    input.press("s", { name: "s" });
+    current = 300_000;
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    input.press("d", { name: "d" });
+    current = 300_001;
+    tickFn?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(checkpoint, 300_000);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
   });
 });
