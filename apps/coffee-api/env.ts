@@ -1,3 +1,10 @@
+declare module 'void/env' {
+  interface ValidatedEnv {
+    COFFEE_ADMIN_TOKEN: string;
+    COFFEE_ALLOWED_ORIGINS: string;
+  }
+}
+
 import { defineEnv, string } from 'void/env';
 
 export default defineEnv({

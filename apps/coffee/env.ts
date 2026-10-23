@@ -1,3 +1,10 @@
+declare module 'void/env' {
+  interface ValidatedEnv {
+    COFFEE_API_URL: string;
+    COFFEE_ADMIN_URL: string;
+  }
+}
+
 import { defineEnv, url } from 'void/env';
 
 export default defineEnv({
