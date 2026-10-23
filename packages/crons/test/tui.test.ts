@@ -280,7 +280,7 @@ describe("trigger abort", () => {
     assert.equal(fetches, 0);
     assert.equal(result.ok, false);
     assert.equal(result.httpStatus, 0);
-    assert.equal(result.attempts, 1);
+    assert.equal(result.attempts, 0);
     assert.equal(result.entry, undefined);
     assert.match(result.reason ?? "", /aborted/);
   });

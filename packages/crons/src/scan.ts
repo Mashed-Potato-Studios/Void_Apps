@@ -1,15 +1,10 @@
 import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import ts from "typescript";
 import { validateCloudflareCron } from "./cron-expr.js";
 import type { CronJob } from "./types.js";
 export const CRON_DIR = "crons";
 export const CRON_EXTS = [".ts", ".mts", ".js", ".mjs"] as const;
-
-const STRING_EXPORT =
-  /export\s+const\s+cron\s*(?::\s*string\s*)?=\s*["']([^"']+)["']/;
-const ARRAY_EXPORT =
-  /export\s+const\s+cron\s*(?::\s*(?:string\s*\[\]|Array<string>))?\s*=\s*\[([\s\S]*?)\]/;
-const QUOTED = /["']([^"']+)["']/g;
 
 /**
  * Synchronous cron check against Cloudflare's Cron Trigger grammar.
@@ -20,114 +15,169 @@ export function isCronExpression(value: string): boolean {
   return validateCloudflareCron(value) === null;
 }
 
-/** Strip line/block comments so commented-out exports never scan as real. String-safe. */
-function stripComments(source: string): string {
-  let out = "";
-  let i = 0;
-  let quote: string | null = null;
-  let blockDepth = 0;
-  while (i < source.length) {
-    const c = source[i];
-    const next = source[i + 1];
-    if (blockDepth > 0) {
-      if (c === "*" && next === "/") {
-        blockDepth--;
-        i += 2;
-      } else if (c === "/" && next === "*") {
-        blockDepth++;
-        i += 2;
-      } else {
-        out += c === "\n" ? "\n" : " ";
-        i++;
-      }
-      continue;
-    }
-    if (quote !== null) {
-      out += c;
-      if (c === "\\" && i + 1 < source.length) {
-        out += source[i + 1];
-        i += 2;
-      } else if (c === quote) {
-        quote = null;
-        i++;
-      } else {
-        i++;
-      }
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") {
-      quote = c;
-      out += c;
-      i++;
-    } else if (c === "/" && next === "/") {
-      while (i < source.length && source[i] !== "\n") i++;
-    } else if (c === "/" && next === "*") {
-      blockDepth = 1;
-      i += 2;
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return out;
+function unwrap(node: ts.Node, allowNonNull = true): ts.Node {
+  while (
+    ts.isParenthesizedExpression(node) || ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) || ts.isSatisfiesExpression(node) ||
+    (allowNonNull && ts.isNonNullExpression(node))
+  ) node = node.expression;
+  return node;
 }
-/**
- * `defineScheduled(...)` wrapper detection without the TS compiler (erasable-syntax
- * codebase; `typescript` stays a devDependency). Resolves the `void` import alias
- * (`import { defineScheduled as ds }`) and `void.defineScheduled(...)` namespace
- * calls; ignores bare imports, member access on other objects, method shorthand,
- * and longer identifiers.
- */
-function detectsDefineScheduled(source: string): boolean {
-  const names = new Set<string>(["defineScheduled"]);
-  // import { defineScheduled [as alias] } from 'void' (or "void", any path ending in void)
-  const importList = /import\s*\{([^}]*)\}\s*from\s*["'][^"']*void["']/g;
-  let m: RegExpExecArray | null;
-  while ((m = importList.exec(source)) !== null) {
-    for (const part of (m[1] ?? "").split(",")) {
-      const alias = /defineScheduled\s+as\s+([\w$]+)/.exec(part);
-      if (alias?.[1]) names.add(alias[1]);
+
+function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
+  return ts.canHaveModifiers(node) && (ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false);
+}
+
+function isConstant(node: ts.VariableDeclaration): boolean {
+  return ts.isVariableDeclarationList(node.parent) && (node.parent.flags & ts.NodeFlags.Const) !== 0;
+}
+
+function analyzeSource(source: string, filename: string) {
+  const file = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true);
+  const program = ts.createProgram([filename], { noResolve: true, noLib: true, allowJs: true }, {
+    getSourceFile: (name) => name === filename ? file : undefined,
+    getDefaultLibFileName: () => "",
+    writeFile: () => {},
+    getCurrentDirectory: () => "",
+    getDirectories: () => [],
+    fileExists: (name) => name === filename,
+    readFile: (name) => name === filename ? source : undefined,
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+  });
+  const checker = program.getTypeChecker();
+  const exported = new Map<string, ts.Node>();
+  for (const statement of file.statements) {
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      exported.set("default", statement.expression);
+    } else if (ts.isExportDeclaration(statement) && !statement.isTypeOnly &&
+      statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      for (const element of statement.exportClause.elements) {
+        if (!element.isTypeOnly && element.name.text !== "cron") exported.set(element.name.text, statement.moduleSpecifier ? element : element.propertyName ?? element.name);
+      }
+    } else if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
+      if (hasModifier(statement, ts.SyntaxKind.DefaultKeyword)) {
+        if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) exported.set("default", statement);
+      } else if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (ts.isIdentifier(declaration.name)) exported.set(declaration.name.text, declaration);
+        }
+      } else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name) {
+        exported.set(statement.name.text, statement);
+      }
     }
   }
-  // import * as voidNs from 'void' → voidNs.defineScheduled(...)
-  const namespaces = new Set<string>();
-  const importNs = /import\s*\*\s*as\s+([\w$]+)\s*from\s*["'][^"']*void["']/g;
-  while ((m = importNs.exec(source)) !== null) {
-    if (m[1]) namespaces.add(m[1]);
+
+  function declarationOf(node: ts.Identifier): ts.Declaration | undefined {
+    let symbol = checker.getSymbolAtLocation(node);
+    let declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    if (declaration && ts.isExportSpecifier(declaration) && !declaration.parent.parent.moduleSpecifier) {
+      symbol = checker.getExportSpecifierLocalTargetSymbol(declaration);
+      declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+    }
+    if (declaration && ts.isFunctionDeclaration(declaration)) {
+      return symbol?.declarations?.find((candidate) => ts.isFunctionDeclaration(candidate) && candidate.body) ?? declaration;
+    }
+    return declaration;
   }
-  const hasDirectCall = (name: string): boolean =>
-    new RegExp(`(?:^|[^.\\w$])${name}\\s*(?:<[^;(){}]*>\\s*)?\\([^)]`).test(source);
-  for (const name of names) {
-    if (hasDirectCall(name)) return true;
+
+  function importKind(node: ts.Node, seen = new Set<ts.Node>()): "wrapper" | "namespace" | undefined {
+    node = unwrap(node);
+    if (seen.has(node)) return undefined;
+    seen.add(node);
+    if (ts.isIdentifier(node)) {
+      const declaration = declarationOf(node);
+      if (!declaration) return undefined;
+      if (ts.isVariableDeclaration(declaration) && isConstant(declaration) && declaration.initializer) {
+        return importKind(declaration.initializer, seen);
+      }
+      if (ts.isImportSpecifier(declaration) || ts.isNamespaceImport(declaration)) {
+        const clause = ts.isImportSpecifier(declaration) ? declaration.parent.parent : declaration.parent;
+        const imported = clause.parent;
+        if (clause.isTypeOnly || !ts.isImportDeclaration(imported) || !ts.isStringLiteral(imported.moduleSpecifier) ||
+          !["void", "void/handler"].includes(imported.moduleSpecifier.text)) return undefined;
+        if (ts.isNamespaceImport(declaration)) return "namespace";
+        if (!declaration.isTypeOnly && (declaration.propertyName ?? declaration.name).text === "defineScheduled") return "wrapper";
+      }
+    } else if (ts.isPropertyAccessExpression(node) && node.name.text === "defineScheduled" &&
+      importKind(node.expression, seen) === "namespace") return "wrapper";
+    else if (ts.isElementAccessExpression(node) && node.argumentExpression) {
+      const property = unwrap(node.argumentExpression);
+      if (ts.isStringLiteral(property) && property.text === "defineScheduled" &&
+        importKind(node.expression, seen) === "namespace") return "wrapper";
+    }
+    return undefined;
   }
-  for (const ns of namespaces) {
-    if (new RegExp(`(?:^|[^\\w$])${ns}\\.defineScheduled\\s*\\([^)]`).test(source)) return true;
+
+  function callable(node: ts.Node, seen = new Set<ts.Node>()): boolean | undefined {
+    node = unwrap(node);
+    if (seen.has(node)) return undefined;
+    seen.add(node);
+    if (hasModifier(node, ts.SyntaxKind.DeclareKeyword)) return false;
+    if (ts.isFunctionDeclaration(node)) return node.body !== undefined;
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) return true;
+    if (ts.isIdentifier(node)) {
+      const declaration = declarationOf(node);
+      return declaration ? callable(declaration, seen) : node.text === "undefined" ? false : undefined;
+    }
+    if (ts.isVariableDeclaration(node)) {
+      return isConstant(node) && node.initializer ? callable(node.initializer, seen) : undefined;
+    }
+    if (ts.isImportClause(node)) return node.isTypeOnly ? false : undefined;
+    if (ts.isImportSpecifier(node)) return node.isTypeOnly || node.parent.parent.isTypeOnly ? false : undefined;
+    if (ts.isNamespaceImport(node)) return node.parent.isTypeOnly ? false : undefined;
+    if (ts.isCallExpression(node) && importKind(node.expression) === "wrapper") {
+      const argument = node.arguments[0];
+      return argument ? callable(argument, seen) : false;
+    }
+    if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) ||
+      ts.isClassDeclaration(node) || ts.isClassExpression(node) || ts.isEnumDeclaration(node) ||
+      ts.isModuleDeclaration(node) || ts.isObjectLiteralExpression(node) ||
+      ts.isArrayLiteralExpression(node) || ts.isLiteralExpression(node) || ts.isTemplateExpression(node) ||
+      ts.isPrefixUnaryExpression(node) || ts.isVoidExpression(node) || ts.isTypeOfExpression(node) ||
+      node.kind === ts.SyntaxKind.NullKeyword || node.kind === ts.SyntaxKind.TrueKeyword ||
+      node.kind === ts.SyntaxKind.FalseKeyword) return false;
+    return undefined;
   }
-  return false;
+
+  let usesDefineScheduled = false;
+  function visit(node: ts.Node): void {
+    if (ts.isCallExpression(node) && importKind(node.expression) === "wrapper") usesDefineScheduled = true;
+    ts.forEachChild(node, visit);
+  }
+  visit(file);
+  const syntaxError = program.getSyntacticDiagnostics(file)[0];
+  if (syntaxError) return { expressions: [], error: `invalid cron source: ${ts.flattenDiagnosticMessageText(syntaxError.messageText, " ")}`, usesDefineScheduled };
+  let cron = exported.get("cron");
+  if (cron && ts.isIdentifier(cron)) cron = declarationOf(cron);
+  const initializer = cron && ts.isVariableDeclaration(cron) && isConstant(cron) ? cron.initializer : undefined;
+  const parsed = parseExpressions(initializer, exported.has("cron"));
+  const handler = exported.get("default");
+  const handlerError = !handler ? "missing default handler export" : callable(handler) === false ? "default handler must be callable" : undefined;
+  return { ...parsed, error: parsed.error ?? handlerError, usesDefineScheduled };
 }
 
 function cronError(expr: string): string {
   return validateCloudflareCron(expr) ?? `invalid cron expression: "${expr}"`;
 }
 
-function parseExpressions(source: string): { expressions: string[]; error?: string } {
-  const single = source.match(STRING_EXPORT);
-  if (single?.[1] !== undefined) {
-    const expr = single[1].trim();
-    return isCronExpression(expr) ? { expressions: [expr] } : { expressions: [], error: cronError(expr) };
+function parseExpressions(initializer: ts.Expression | undefined, hasExport: boolean): { expressions: string[]; error?: string } {
+  if (!hasExport) return { expressions: [], error: "missing `export const cron`: void build fails for files in crons/ without a cron export" };
+  const unsupported = { expressions: [], error: "unsupported cron export: use a string literal or array of string literals" };
+  if (!initializer) return unsupported;
+  const node = unwrap(initializer, false);
+  const elements = ts.isArrayLiteralExpression(node) ? node.elements : [node];
+  if (elements.length === 0) return { expressions: [], error: "empty cron array: export at least one expression" };
+  const expressions: string[] = [];
+  for (const element of elements) {
+    const literal = unwrap(element, false);
+    if (!ts.isStringLiteral(literal) && !ts.isNoSubstitutionTemplateLiteral(literal)) return unsupported;
+    const expression = literal.text.trim();
+    if (!isCronExpression(expression)) return { expressions: [], error: cronError(expression) };
+    expressions.push(expression);
   }
-  const multi = source.match(ARRAY_EXPORT);
-  if (multi?.[1] !== undefined) {
-    const raw = [...multi[1].matchAll(QUOTED)].map((m) => (m[1] ?? "").trim()).filter(Boolean);
-    if (raw.length === 0) return { expressions: [], error: "empty cron array: export at least one expression" };
-    const bad = raw.find((e) => !isCronExpression(e));
-    if (bad !== undefined) return { expressions: [], error: cronError(bad) };
-    return { expressions: [...new Set(raw)] };
-  }
-  if (/export\s+(?:const|let|var)\s+cron\b/.test(source)) {
-    return { expressions: [], error: "unsupported cron export: use a string literal or array of string literals" };
-  }
-  return { expressions: [], error: "missing `export const cron`: void build fails for files in crons/ without a cron export" };
+  return { expressions: [...new Set(expressions)] };
 }
 
 function walk(dir: string, root: string, out: string[] = []): string[] {
@@ -185,9 +235,7 @@ export function scanCronFiles(
         sharedExpression: false,
       } satisfies CronJob;
     }
-    const stripped = stripComments(source);
-    const { expressions, error } = parseExpressions(stripped);
-    const usesDefineScheduled = detectsDefineScheduled(stripped);
+    const { expressions, error, usesDefineScheduled } = analyzeSource(source, abs);
     if (error !== undefined || expressions.length === 0) {
       return {
         path: rel,
@@ -208,6 +256,21 @@ export function scanCronFiles(
       sharedExpression: false,
     } satisfies CronJob;
   });
+
+  const byName = new Map<string, CronJob[]>();
+  for (const job of jobs) {
+    const siblings = byName.get(job.name) ?? [];
+    siblings.push(job);
+    byName.set(job.name, siblings);
+  }
+  for (const [name, siblings] of byName) {
+    if (siblings.length < 2) continue;
+    for (const job of siblings) {
+      job.status = "invalid";
+      job.error = `duplicate cron job name "${name}": ${siblings.map((sibling) => sibling.path).join(", ")}`;
+      job.expressions = [];
+    }
+  }
 
   // Jobs sharing one expression each run once per invocation but count
   // once toward the 100-expression platform limit — flag the overlap.

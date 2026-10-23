@@ -89,6 +89,14 @@ export function openActivityDb(appRoot: string): DatabaseSync {
     )`,
   );
   db.exec("CREATE INDEX IF NOT EXISTS cron_activity_recorded_at ON cron_activity (recorded_at DESC, id DESC)");
+  const columns = db.prepare("PRAGMA table_info(cron_activity)").all();
+  if (!columns.some((column) => column["name"] === "dispatch_metadata")) {
+    try {
+      db.exec("ALTER TABLE cron_activity ADD COLUMN dispatch_metadata TEXT");
+    } catch (error) {
+      if (!db.prepare("PRAGMA table_info(cron_activity)").all().some((column) => column["name"] === "dispatch_metadata")) throw error;
+    }
+  }
   return db;
 }
 
@@ -104,13 +112,21 @@ function rowToEntry(row: Record<string, unknown>): CronActivityEntry | null {
     finishedAt: String(row["finished_at"] ?? ""),
     durationMs: typeof row["duration_ms"] === "number" ? row["duration_ms"] : 0,
     status:
-      row["status"] === "success" || row["status"] === "failed" || row["status"] === "skipped"
+      row["status"] === "success" || row["status"] === "failed" || row["status"] === "skipped" || row["status"] === "unknown"
         ? row["status"]
         : "failed",
     source: row["source"] === "remote" ? "remote" : "local",
   };
   if (typeof row["items_processed"] === "number") entry.itemsProcessed = row["items_processed"];
   if (typeof row["error"] === "string") entry.error = row["error"];
+  if (typeof row["dispatch_metadata"] === "string") {
+    try {
+      const metadata = JSON.parse(row["dispatch_metadata"]);
+      if (metadata.kind === "dispatch") entry.kind = "dispatch";
+      if (Array.isArray(metadata.affectedJobs) && metadata.affectedJobs.every((name: unknown) => typeof name === "string")) entry.affectedJobs = metadata.affectedJobs;
+      if (["local", "remote", "unknown"].includes(metadata.bindingMode)) entry.bindingMode = metadata.bindingMode;
+    } catch {}
+  }
   return entry;
 }
 
@@ -121,8 +137,8 @@ export function appendActivityDb(appRoot: string, entries: CronActivityEntry[]):
     db.exec("PRAGMA busy_timeout = 5000");
     const stmt = db.prepare(
       `INSERT OR IGNORE INTO cron_activity
-        (id, job_name, cron, scheduled_time, finished_at, duration_ms, status, items_processed, error, source, recorded_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        (id, job_name, cron, scheduled_time, finished_at, duration_ms, status, items_processed, error, source, recorded_at, dispatch_metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const e of entries) {
       stmt.run(
@@ -137,6 +153,7 @@ export function appendActivityDb(appRoot: string, entries: CronActivityEntry[]):
         e.error ?? null,
         e.source,
         Date.now(),
+        JSON.stringify({ kind: e.kind, affectedJobs: e.affectedJobs, bindingMode: e.bindingMode }),
       );
     }
     db.exec(

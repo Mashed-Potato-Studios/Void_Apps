@@ -54,8 +54,6 @@ export function buildCronManifest(
   const deployable = jobs.filter((j) => j.status === "active");
   const expressions = [...new Set(deployable.flatMap((j) => j.expressions))].sort();
   const scheduleCount = deployable.reduce((n, j) => n + j.expressions.length, 0);
-  // Mirrors Void's deploy manifest: one entry per expression, shared
-  // expressions included once per job that exports them.
   const schedules: CronSchedule[] = deployable
     .flatMap((j) => j.expressions.map((cron) => ({ name: j.name, cron })))
     .sort((a, b) => (a.name === b.name ? (a.cron < b.cron ? -1 : 1) : a.name < b.name ? -1 : 1));

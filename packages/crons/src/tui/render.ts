@@ -84,7 +84,7 @@ function fmtLast(job: JobView, nowMs: number): string {
   if (Number.isNaN(finished)) return job.last.status;
   const minutes = Math.max(0, Math.round((nowMs - finished) / 60_000));
   const when = minutes < 1 ? "now" : minutes < 60 ? `${minutes}m` : `${Math.round(minutes / 60)}h`;
-  return `last ${job.last.status === "success" ? "ok" : "fail"} ${when}`;
+  return `last ${job.last.status === "success" ? "ok" : job.last.status} ${when}`;
 }
 
 function markerFor(job: JobView): { text: string; code: string } {
@@ -153,7 +153,7 @@ function jobRow(job: JobView, selected: boolean, width: number, nowMs: number, c
 }
 
 function activityRow(entry: CronActivityEntry, width: number): string {
-  const status = entry.status === "success" ? "ok" : "fail";
+  const status = entry.kind === "dispatch" && entry.status === "success" ? "ack" : entry.status === "success" ? "ok" : entry.status;
   return pad(
     truncate(`  ↳ ${hhmm(entry.finishedAt)} ${entry.jobName} ${entry.cron} ${status} ${entry.durationMs}ms`, width),
     width,

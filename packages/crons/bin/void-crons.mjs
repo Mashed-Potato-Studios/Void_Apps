@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const distEntry = join(root, "dist", "cli.js");
 const srcEntry = join(root, "src", "cli.ts");
+const hookEntry = join(root, "test", "hooks", "resolve-ts.mjs");
 
 function mtime(path) {
   try {
@@ -36,8 +37,11 @@ function newestSrcMtime() {
   return newest;
 }
 try {
-  const fresh = existsSync(distEntry) && mtime(distEntry) >= newestSrcMtime();
-  if (fresh) {
+  // Published packages only ship dist/bin, so the src fallback is only usable
+  // from a checkout that also has the test hook.
+  const canRunSrc = existsSync(srcEntry) && existsSync(hookEntry);
+  const fresh = existsSync(distEntry) && (!canRunSrc || mtime(distEntry) >= newestSrcMtime());
+  if (fresh || !canRunSrc) {
     const { run } = await import("../dist/cli.js");
     process.exitCode = await run(process.argv.slice(2), process.cwd());
   } else {

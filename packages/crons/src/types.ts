@@ -15,7 +15,7 @@ export interface CronJob {
   name: string;
   /** Cron expressions exported by the file. Empty when `invalid`. */
   expressions: string[];
-  /** Toggle state. `disabled` = skipped by local trigger + hidden from deploy manifest. */
+  /** Local preference only; this does not remove a platform schedule. */
   status: CronJobStatus;
   /** Set when `status === "invalid"`: missing/unsupported `cron` export. */
   error?: string;
@@ -31,8 +31,7 @@ export interface CronManifest {
   app: string;
   emittedAt: string;
   jobs: CronJob[];
-  /** One entry per active expression — the exact shape `void deploy` publishes
-   *  (`{ name, cron }`, job name is the path inside crons/ without extension).
+  /** Local inspection entries, not deployment configuration consumed by Void.
    *  Optional so manifests emitted before this field still parse. */
   schedules?: CronSchedule[];
   /** Distinct expression count (Void platform limit: 100). */
@@ -57,19 +56,46 @@ export interface CronActivityEntry {
   scheduledTime: string;
   finishedAt: string;
   durationMs: number;
-  status: "success" | "failed" | "skipped";
+  status: "success" | "failed" | "skipped" | "unknown";
+  kind?: "dispatch";
+  affectedJobs?: string[];
+  bindingMode?: "local" | "remote" | "unknown";
   itemsProcessed?: number;
   error?: string;
   /** `local` (dev trigger) or `remote` (prod webhook record). */
   source: "local" | "remote";
 }
 
+export type CronTriggerTransport = "dev" | "framework";
+export type CronProductionOutcome = "accepted" | "rejected" | "unknown";
+
+/** Sanitized proof that a deployed framework endpoint accepted a dispatch. */
+export interface CronProductionEvidence {
+  format: 1;
+  origin: string;
+  transport: "framework";
+  authMode: "framework-internal";
+  outcome: CronProductionOutcome;
+  httpStatus: number;
+  verifiedAt: string;
+  expression?: string;
+}
+
 export interface CronTriggerOptions {
   /** Dev server origin, e.g. `http://localhost:5173`. */
   origin: string;
+  transport?: CronTriggerTransport;
+  /** Required for production framework dispatch; never inferred. */
+  allowRemote?: boolean;
+  /** Optional proof that this exact target accepted a real dispatch. */
+  productionEvidence?: CronProductionEvidence;
+  bindingMode?: "local" | "remote" | "unknown";
+  allowRemoteBindings?: boolean;
+  jobs?: readonly CronJob[];
+  disabled?: readonly string[];
   /** Value printed by the dev server for `x-void-dev-trigger`. */
   devToken?: string;
-  /** When set (or `CRON_SECRET` env), sent as `x-void-internal` for prod calls. */
+  /** Explicit framework transport only; native production auth is not supported. */
   cronSecret?: string;
   scheduledTime?: number;
   fetchImpl?: typeof fetch;

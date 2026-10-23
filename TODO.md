@@ -1,5 +1,14 @@
 ## Done
 
+### Runtime integrations (0.4.0)
+
+- [x] D1 ledger adapter with idempotent writes, retention, and query APIs (#13)
+- [x] Queue correlation with enqueue, completion, retry, and exhaustion phases (#14)
+- [x] Native durable-state lease/pause coordination (#15)
+- [x] Authorized live notifications after persistence (#16)
+- [x] Verified production transport with evidence-backed `doctor` (#17)
+- [x] Verification: typecheck, build, 262 tests, packed-package export smoke
+
 ### TUI live ops (0.3.0)
 
 - [x] Live schedule loop, start/stop with `s` (`8615d14`)

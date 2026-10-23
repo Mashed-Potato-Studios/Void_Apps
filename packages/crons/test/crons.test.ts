@@ -293,6 +293,8 @@ describe("trigger", () => {
 
     const prod = await triggerExpression("0 * * * *", "heartbeat", {
       origin: "https://api.example.com",
+      transport: "framework",
+      allowRemote: true,
       cronSecret: "sekret-prod",
       fetchImpl,
     });
@@ -449,7 +451,7 @@ describe("void-crons CLI trigger", () => {
     try {
       assert.equal(await run(["trigger", "heartbeat", app], join(app, "..")), 0);
       assert.equal(calls.length, 1);
-      assert.match(logs.join("\n"), /fired heartbeat 0 \* \* \* \*/);
+      assert.match(logs.join("\n"), /dispatch acknowledged heartbeat 0 \* \* \* \*/);
     } finally {
       restore();
       console.log = orig;
@@ -612,8 +614,7 @@ describe("review-fix regressions", () => {
       assert.equal(await run(["schedule", "--once", app], process.cwd()), 0);
       const text = logs.join("\n");
       assert.equal((text.match(/job "cleanup" is disabled/g) ?? []).length, 1);
-      // heartbeat still fires; cleanup skipped exactly once
-      assert.match(text, /caught up \(1 fired, 1 skipped\)/);
+      assert.match(text, /caught up \(0 fired, 2 skipped\)/);
     } finally {
       restore();
       console.log = orig;

@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { detectDrift, readCronManifest } from "../manifest.js";
 import { scanCronFiles } from "../scan.js";
-import { computeDue } from "../schedule.js";
+import { nextDue } from "../schedule.js";
 import { readActivityLog, type ActivityStoreMode } from "../store.js";
 import type { CronActivityEntry, CronJob } from "../types.js";
 import type { JobView, ManifestState, Snapshot } from "./model.js";
@@ -17,7 +17,7 @@ export interface SnapshotOptions {
 }
 
 function nextFire(job: CronJob, nowMs: number, tz?: string): number | null {
-  const due = computeDue(job.expressions, nowMs + 1, nowMs + PREVIEW_WINDOW_MS, tz ? { tz } : {})[0];
+  const due = nextDue(job.expressions, nowMs, nowMs + PREVIEW_WINDOW_MS, tz ? { tz } : {})[0];
   return due ? due.dueMs : null;
 }
 

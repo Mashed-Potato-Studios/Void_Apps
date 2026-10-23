@@ -1,10 +1,10 @@
 import { statSync } from "node:fs";
 import { emitKeypressEvents } from "node:readline";
 import { emitCronManifest } from "../manifest.js";
-import { runScheduleOnce, tickSchedule, type ScheduleRun } from "../schedule.js";
+import { collectScheduleTargets, runScheduleOnce, tickSchedule, type ScheduleRun } from "../schedule.js";
 import { appendActivityLog, type ActivityStoreMode } from "../store.js";
 import { triggerJob } from "../trigger.js";
-import type { CronTriggerResult } from "../types.js";
+import type { CronJob, CronTriggerOptions, CronTriggerResult } from "../types.js";
 import { loadSnapshot } from "./data.js";
 import { keyToMsg, type KeyPress } from "./keys.js";
 import {
@@ -20,7 +20,7 @@ import {
 import { render } from "./render.js";
 import { startWatcher, type WatcherHandle } from "./watch.js";
 
-export interface TuiOptions {
+export interface TuiOptions extends Pick<CronTriggerOptions, "transport" | "allowRemote" | "productionEvidence" | "cronSecret" | "bindingMode" | "allowRemoteBindings"> {
   appPath: string;
   origin: string;
   storeMode: ActivityStoreMode;
@@ -33,7 +33,7 @@ export interface TuiOptions {
 
 export interface TuiActions {
   load(disabled?: string[]): Snapshot;
-  trigger(job: JobView, signal: AbortSignal): Promise<CronTriggerResult[]>;
+  trigger(job: JobView, signal: AbortSignal, jobs?: readonly CronJob[]): Promise<CronTriggerResult[]>;
   emit(disabled: string[]): { path: string };
   catchUp(disabled: string[], signal: AbortSignal): Promise<ScheduleRun>;
 }
@@ -81,8 +81,10 @@ function createActions(opts: TuiOptions): TuiActions {
   return {
     load: (disabled) =>
       loadSnapshot(opts.appPath, { disabled, tz: opts.tz, storeMode: opts.storeMode }),
-    trigger: async (job, signal) => {
+    trigger: async (job, signal, jobs) => {
       const results = await triggerJob(job, {
+        ...opts,
+        jobs: jobs ?? loadSnapshot(opts.appPath).jobs,
         origin: opts.origin,
         ...(opts.devToken ? { devToken: opts.devToken } : {}),
         timeoutMs: opts.timeoutMs,
@@ -96,6 +98,7 @@ function createActions(opts: TuiOptions): TuiActions {
     emit: (disabled) => emitCronManifest(opts.appPath, { disabled }),
     catchUp: (disabled, signal) =>
       runScheduleOnce(opts.appPath, {
+        ...opts,
         origin: opts.origin,
         ...(opts.devToken ? { devToken: opts.devToken } : {}),
         disabled,
@@ -109,14 +112,7 @@ function createActions(opts: TuiOptions): TuiActions {
 }
 
 function activeTargets(state: TuiState): Map<string, string> {
-  const active = new Map<string, string>();
-  for (const job of state.jobs) {
-    if (job.status !== "active") continue;
-    for (const expression of job.expressions) {
-      if (!active.has(expression)) active.set(expression, job.name);
-    }
-  }
-  return active;
+  return collectScheduleTargets(state.jobs, new Set(state.disabled)).active;
 }
 
 export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<number> {
@@ -264,6 +260,8 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
           },
           { active, skipped: [] },
           {
+            ...opts,
+            jobs: state.jobs,
             origin: opts.origin,
             ...(opts.devToken ? { devToken: opts.devToken } : {}),
             nowMs: now(),
@@ -331,11 +329,13 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       state = reduce(state, { type: "busy", label: `trigger ${job.name}` });
       draw();
       try {
-        const results = await actions.trigger(job, aborter.signal);
+        const results = await actions.trigger(job, aborter.signal, state.jobs);
         if (settled) return;
         const fired = results.filter((result) => result.ok).length;
         const failed = results.filter((result) => !result.ok && !result.skipped);
-        if (failed.length === 0) {
+        if (results.every((result) => result.skipped)) {
+          refresh("error", results[0]?.reason ?? "dispatch skipped");
+        } else if (failed.length === 0) {
           refresh("success", `fired ${job.name} (${fired}/${results.length})`);
         } else {
           const reason = failed[0]?.entry?.error ?? failed[0]?.reason ?? "unknown";

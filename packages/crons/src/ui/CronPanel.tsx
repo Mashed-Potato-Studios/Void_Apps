@@ -22,6 +22,7 @@ const ACTIVITY_COLOR: Record<CronActivityEntry["status"], string> = {
   success: "#10b981",
   failed: "#ef4444",
   skipped: "#f59e0b",
+  unknown: "#f59e0b",
 };
 
 const panelStyle: CSSProperties = {
@@ -234,7 +235,8 @@ export function CronPanel({
                 <span style={{ color: ACTIVITY_COLOR[entry.status] }}>●</span>
                 <span style={{ color: "#fff" }}>{entry.jobName}</span>
                 <span style={{ color: "#635f75" }}>{entry.cron}</span>
-                <span style={{ color: ACTIVITY_COLOR[entry.status] }}>{entry.status}</span>
+                <span style={{ color: ACTIVITY_COLOR[entry.status] }}>{entry.kind === "dispatch" ? `dispatch ${entry.status === "success" ? "acknowledged" : entry.status}` : entry.status}</span>
+                {entry.affectedJobs && entry.affectedJobs.length > 1 && <span>jobs: {entry.affectedJobs.join(", ")}</span>}
                 <span style={{ color: "#635f75" }}>{(entry.durationMs / 1000).toFixed(1)}s</span>
                 {entry.itemsProcessed !== undefined && (
                   <span style={{ color: "#635f75" }}>items={entry.itemsProcessed}</span>
