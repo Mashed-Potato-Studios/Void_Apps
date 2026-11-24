@@ -217,7 +217,7 @@ directly (Node type-stripping) with a stderr note — it never silently runs sta
 
 Live against the Crew Coffee API (5 crons, 1 queue, dispatch acknowledged):
 
-![void-crons TUI showing coffee-api jobs, queue count, and activity](https://raw.githubusercontent.com/Mashed-Potato-Studios/Void_Apps/main/packages/crons/docs/tui-coffee-api.png)
+![void-crons TUI showing coffee-api jobs, queue count, and activity](https://raw.githubusercontent.com/Mashed-Potato-Studios/Void_Apps/83abaa7432205b4bf704979bac4a67cfa9cb7b2e/packages/crons/docs/tui-coffee-api.png)
 
 Start it **from the app directory** — the one containing a supported Void config and
 `crons/`. No path argument needed; it uses the current directory. Pass `--origin`
