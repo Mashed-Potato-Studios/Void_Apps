@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createState, reduce, type JobView, type Snapshot, type TuiState } from "../src/tui/model.ts";
+import { activityRowsForHeight, createState, reduce, selectedQueue, type JobView, type Snapshot, type TuiState } from "../src/tui/model.ts";
+import type { QueueDefinition } from "../src/queue-scan.ts";
 import type { CronActivityEntry, CronJob } from "../src/types.ts";
 import { render, truncate } from "../src/tui/render.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -31,7 +32,18 @@ function snapshot(jobs: JobView[] = [job("alpha"), job("beta"), job("gamma")], o
     activity: [],
     disabled: [],
     scannedAt: 5,
+    queues: [],
     ...over,
+  };
+}
+
+function queue(name = "order-events", status: QueueDefinition["status"] = "active"): QueueDefinition {
+  return {
+    path: `queues/${name}.ts`,
+    name,
+    status,
+    usesDefineQueue: true,
+    options: { maxBatchSize: 25, maxRetries: 3 },
   };
 }
 
@@ -159,6 +171,7 @@ describe("tui render", () => {
   it("shows an empty state and drift lines", () => {
     const empty = render(state({ jobs: [] }), 60_000, false).join("\n");
     assert.match(empty, /no jobs in crons\//);
+    assert.match(empty, /add a file to crons\//);
 
     const drift = render(
       state({ manifest: "drift", drift: ["+crons/new.ts added"] }),
@@ -370,6 +383,7 @@ function fakeActions(over: Partial<TuiActions> = {}): TuiActions {
     trigger: async () => [],
     emit: () => ({ path: "/tmp/demo/void.crons.json" }),
     catchUp: async () => ({ fired: [], skipped: [] }),
+    sendQueue: async () => ({ ok: true, httpStatus: 200, attempts: 1, retried: false, durationMs: 1, count: 1 }),
     ...over,
   };
 }
@@ -1265,6 +1279,263 @@ describe("tui live-ops race fixes", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(checkpoint, 300_000);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+});
+
+describe("tui queues in the same dashboard", () => {
+  it("toggles to a queue pane without losing the job selection", () => {
+    const queues = [queue("order-events"), queue("emails")];
+    let s = state({ queues, selected: 1 });
+    assert.equal(selectedJob(s)?.name, "beta");
+    s = reduce(s, { type: "pane-toggle" });
+    assert.equal(s.pane, "queues");
+    assert.equal(selectedQueue(s)?.name, "order-events");
+    assert.equal(s.selected, 1, "job selection untouched");
+
+    s = reduce(s, { type: "move", delta: 1 });
+    assert.equal(selectedQueue(s)?.name, "emails");
+    s = reduce(s, { type: "move-to", position: "first" });
+    assert.equal(selectedQueue(s)?.name, "order-events");
+    s = reduce(s, { type: "escape" });
+    assert.equal(s.pane, "activity");
+    assert.equal(selectedJob(s)?.name, "beta");
+  });
+
+  it("renders queue names, paths, and options in the lower pane", () => {
+    const s = reduce(state({ queues: [queue("order-events"), queue("broken", "invalid")] }), { type: "pane-toggle" });
+    const lines = render(s, 60_000, false);
+    assert.equal(lines.length, 24);
+    assert.ok(lines.every((line) => [...line].length <= 80));
+    const text = lines.join("\n");
+    assert.match(text, /Queues \(2\) · Q activity/);
+    assert.match(text, /order-events/);
+    assert.match(text, /maxBatchSize=25/);
+    assert.match(text, /broken/);
+    assert.doesNotMatch(text, /Activity/);
+  });
+
+  it("maps Q and dispatches the selected queue with enter", async () => {
+    assert.deepEqual(keys("Q", { name: "Q" }), { type: "pane-toggle" });
+    assert.deepEqual(keys("q", { name: "q" }), { type: "quit" });
+
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const sent: string[] = [];
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5175", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          load: () => snapshot(undefined, { queues: [queue("order-events")] }),
+          sendQueue: async (name) => {
+            sent.push(name);
+            return { ok: true, httpStatus: 200, attempts: 1, retried: false, durationMs: 5, count: 1 };
+          },
+        }),
+      },
+    );
+    input.press("Q", { name: "Q" });
+    input.press("\r", { name: "return" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(sent, ["order-events"]);
+    assert.match(output.chunks.at(-1) ?? "", /sent order-events/);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("includes queues in loaded snapshots", () => {
+    const app = makeApp({ "heartbeat.ts": HEARTBEAT });
+    try {
+      mkdirSync(join(app, "queues"), { recursive: true });
+      writeFileSync(
+        join(app, "queues", "order-events.ts"),
+        `import { defineQueue } from 'void';\nexport default defineQueue(async () => {});\n`,
+      );
+      const snap = loadSnapshot(app, { storeMode: "jsonl" });
+      assert.equal(snap.queues.length, 1);
+      assert.equal(snap.queues[0]?.name, "order-events");
+    } finally {
+      rmSync(app, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("tui visual polish and actionable errors", () => {
+  it("fills unused space with the coffee mug on tall terminals", () => {
+    const lines = render(state({ width: 120, height: 50 }), 60_000, false);
+    assert.equal(lines.length, 50);
+    assert.ok(lines.every((line) => [...line].length <= 120));
+    const text = lines.join("\n");
+    assert.match(text, /freshly brewed locally/);
+    assert.match(text, /VOID/);
+  });
+
+  it("expands the activity pane on tall terminals", () => {
+    const text = render(state({ width: 120, height: 40 }), 60_000, false).join("\n");
+    assert.match(text, /Activity/);
+    assert.ok(activityRowsForHeight(40) > activityRowsForHeight(24));
+  });
+
+  it("warns in the status line when no dev token is configured", () => {
+    const bare = render(state({ hasToken: false }), 60_000, false).join("\n");
+    assert.match(bare, /no dev token/);
+    const ready = render(state({ hasToken: true }), 60_000, false).join("\n");
+    assert.doesNotMatch(ready, /no dev token/);
+  });
+
+  it("points at the configured origin when dispatch transport fails", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    output.columns = 120;
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5199", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          trigger: async () => [{ ok: false, httpStatus: 0, attempts: 1, retried: false }],
+        }),
+      },
+    );
+    input.press("\r", { name: "return" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(output.chunks.at(-1) ?? "", /is the dev server running at http:\/\/localhost:5199/);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+
+  it("explains a 401 trigger rejection instead of showing a raw failure", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions({
+          trigger: async () => [{ ok: false, httpStatus: 401, attempts: 1, retried: false }],
+        }),
+      },
+    );
+    input.press("\r", { name: "return" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(output.chunks.at(-1) ?? "", /restart ui with --token/);
+    input.press("q", { name: "q" });
+    assert.equal(await promise, 0);
+  });
+});
+
+describe("tui layout and timezone", () => {
+  it("keeps the status line on a 14-row terminal", () => {
+    const lines = render(state({ height: 14 }), 60_000, false);
+    assert.equal(lines.length, 14);
+    assert.match(lines.at(-1) ?? "", /status: ready/);
+  });
+
+  it("shows scan and activity times in the preview zone, not process-local time", () => {
+    const at = Date.UTC(2026, 0, 1, 0, 30);
+    const entry: CronActivityEntry = {
+      id: "e1",
+      jobName: "alpha",
+      cron: "* * * * *",
+      scheduledTime: new Date(at).toISOString(),
+      finishedAt: new Date(at).toISOString(),
+      durationMs: 12,
+      status: "success",
+      source: "local",
+    };
+    const utc = render(state({ tz: "UTC", scannedAt: at, activity: [entry] }), 60_000, false).join("\n");
+    assert.match(utc, /tz UTC/);
+    assert.match(utc, /scan 00:30:00/);
+    assert.match(utc, /00:30 alpha/);
+
+    const ny = render(
+      state({ tz: "America/New_York", scannedAt: at, activity: [entry] }),
+      60_000,
+      false,
+    ).join("\n");
+    assert.match(ny, /tz America\/New_York/);
+    assert.match(ny, /scan 19:30:00/);
+    assert.match(ny, /19:30 alpha/);
+  });
+});
+
+describe("tui help and paging", () => {
+  it("maps help, page, and jump keys", () => {
+    assert.deepEqual(keys("?", { name: "?" }), { type: "help-toggle" });
+    assert.deepEqual(keys(undefined, { name: "f1" }), { type: "help-toggle" });
+    assert.deepEqual(keys(undefined, { name: "pageup" }), { type: "move-page", direction: -1 });
+    assert.deepEqual(keys(undefined, { name: "pagedown" }), { type: "move-page", direction: 1 });
+    assert.deepEqual(keys("g", { name: "g" }), { type: "move-to", position: "first" });
+    assert.deepEqual(keys("G", { name: "G" }), { type: "move-to", position: "last" });
+    // In filter mode '?' and 'g' are text, not commands.
+    assert.deepEqual(keys("?", { name: "?" }, true), { type: "filter-char", char: "?" });
+  });
+
+  it("pages and jumps within the visible list", () => {
+    const jobs = Array.from({ length: 12 }, (_, index) => job(`job${String(index).padStart(2, "0")}`));
+    let s = state({ jobs, height: 24 });
+    s = reduce(s, { type: "move-to", position: "last" });
+    assert.equal(selectedJob(s)?.name, "job11");
+    s = reduce(s, { type: "move-page", direction: -1 });
+    assert.equal(selectedJob(s)?.name, "job02");
+    s = reduce(s, { type: "move-to", position: "first" });
+    assert.equal(selectedJob(s)?.name, "job00");
+  });
+
+  it("renders the help overlay and closes it with escape", () => {
+    let s = reduce(state(), { type: "help-toggle" });
+    assert.equal(s.help, true);
+    const lines = render(s, 60_000, false);
+    assert.equal(lines.length, 24);
+    assert.ok(lines.every((line) => [...line].length <= 80));
+    const text = lines.join("\n");
+    assert.match(text, /help · tz UTC/);
+    assert.match(text, /PgUp\/PgDn/);
+    assert.match(text, /trigger job \/ send to selected queue/);
+    assert.match(text, /\? close/);
+    s = reduce(s, { type: "escape" });
+    assert.equal(s.help, false);
+  });
+
+  it("toggles the help overlay from the keyboard runner", async () => {
+    const input = new FakeInput();
+    const output = new FakeOutput();
+    const promise = startTui(
+      { appPath: process.cwd(), origin: "http://localhost:5173", storeMode: "jsonl", retries: 0, timeoutMs: 1000 },
+      {
+        stdin: input as never,
+        stdout: output as never,
+        signals: new FakeSignals() as never,
+        watch: () => ({ close() {}, failed: false }),
+        setInterval: () => 1,
+        clearInterval: () => {},
+        now: () => 60_000,
+        actions: fakeActions(),
+      },
+    );
+    input.press("?", { name: "?" });
+    assert.match(output.chunks.at(-1) ?? "", /help · tz UTC/);
+    input.press("?", { name: "?" });
+    assert.doesNotMatch(output.chunks.at(-1) ?? "", /help · tz UTC/);
     input.press("q", { name: "q" });
     assert.equal(await promise, 0);
   });

@@ -1,3 +1,4 @@
+import { createPlatform, type CronPlatform } from "./platform.js";
 import {
   cronRunToLedgerEvent,
   sanitizeCronErrorSummary,
@@ -30,6 +31,8 @@ export interface D1CronStoreOptions {
   /** Defaults to 30 days. Set `0` to disable automatic retention. */
   retentionMs?: number;
   now?: () => number;
+  /** Host capabilities to use; defaults resolve from host globals. */
+  platform?: CronPlatform;
 }
 
 export interface D1CronStore extends CronRunStore, CronLedgerStore {
@@ -102,7 +105,8 @@ function rowToEvent(row: Record<string, unknown>): CronLedgerEvent | null {
  */
 export function createD1CronStore(options: D1CronStoreOptions): D1CronStore {
   const table = assertTable(options.table ?? "cron_runs");
-  const now = options.now ?? Date.now;
+  const platform = options.platform ?? createPlatform();
+  const now = options.now ?? platform.now;
   const retentionMs = options.retentionMs ?? DEFAULT_RETENTION_MS;
   let schemaReady: Promise<void> | undefined;
   let ready = false;

@@ -16,6 +16,9 @@
     "crons:check": "void-crons check",
     "crons:emit": "void-crons emit",
     "crons:schedule": "void-crons schedule --origin http://localhost:5175",
+    "crons:ui": "void-crons ui --origin http://localhost:5175",
+    "queues:list": "void-crons queues",
+    "queues:send": "void-crons queue-send order-events --origin http://localhost:5175 --body '{\"orderId\":\"demo-1\",\"type\":\"created\",\"itemCount\":2,\"totalCents\":1250}'",
     "test": "node --test --test-concurrency=1 --import ./test/hooks/register.mjs \"test/**/*.test.ts\""
   },
   "dependencies": {

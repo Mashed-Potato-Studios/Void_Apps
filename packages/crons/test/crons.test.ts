@@ -560,11 +560,11 @@ describe("void-crons json contract", () => {
 });
 
 describe("void-crons list preview", () => {
-  // pinned Review Focus input 4: yearly expr inside 8d window → never, no crash
-  it("shows next-fire column; yearly jobs read never; json carries nextFireMs", async () => {
+  // Impossible-but-parseable dates never come due — deterministic (no wall-clock dependency).
+  it("shows next-fire column; never-due jobs read never; json omits nextFireMs", async () => {
     const app = makeApp({
       "hourly.ts": HEARTBEAT,
-      "yearly.ts": `export const cron = '0 0 1 1 *';\nexport default async () => {};\n`,
+      "yearly.ts": `export const cron = '0 0 30 2 *';\nexport default async () => {};\n`,
     });
     const logs: string[] = [];
     const orig = console.log;
@@ -580,8 +580,8 @@ describe("void-crons list preview", () => {
       logs.length = 0;
       assert.equal(await run(["list", app], process.cwd()), 0);
       const text = logs.join("\n");
-      assert.match(text, /next in \d+[mh]/);
-      assert.match(text, /yearly\s+0 0 1 1 \*\s+never/);
+      assert.match(text, /next in (<2m|\d+[mh])/);
+      assert.match(text, /yearly\s+0 0 30 2 \*\s+never/);
     } finally {
       console.log = orig;
       rmSync(app, { recursive: true, force: true });

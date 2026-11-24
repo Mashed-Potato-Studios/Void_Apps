@@ -32,12 +32,27 @@ export function keyToMsg(
       return { type: "move", delta: -1 };
     case "down":
       return { type: "move", delta: 1 };
+    case "pageup":
+      return { type: "move-page", direction: -1 };
+    case "pagedown":
+      return { type: "move-page", direction: 1 };
+    case "home":
+      return { type: "move-to", position: "first" };
+    case "end":
+      return { type: "move-to", position: "last" };
+    case "f1":
+      return { type: "help-toggle" };
     case "return":
     case "enter":
       return { type: "trigger" };
     default:
       break;
   }
+
+  // Vim-style jumps are case-sensitive; the rest of the keymap is not.
+  if (str === "g") return { type: "move-to", position: "first" };
+  if (str === "G") return { type: "move-to", position: "last" };
+  if (str === "Q") return { type: "pane-toggle" };
 
   switch (str?.toLowerCase()) {
     case "k":
@@ -62,6 +77,8 @@ export function keyToMsg(
       return { type: "refresh" };
     case "q":
       return { type: "quit" };
+    case "?":
+      return { type: "help-toggle" };
     default:
       return null;
   }

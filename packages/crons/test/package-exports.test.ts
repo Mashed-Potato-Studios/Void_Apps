@@ -11,7 +11,7 @@ const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.
 
 describe("packed package surface", () => {
   it("keeps every source export and publish target for the adapters", () => {
-    const expected = ["./d1", "./queue", "./durable", "./live", "./evidence", "./production", "./runtime"];
+    const expected = ["./d1", "./queue", "./queue-scan", "./queue-send", "./platform", "./memory", "./durable", "./live", "./evidence", "./production", "./runtime"];
     for (const entry of expected) {
       assert.equal(typeof manifest.exports[entry], "string", `${entry} source export`);
       assert.equal(typeof manifest.publishConfig.exports[entry], "string", `${entry} publish export`);

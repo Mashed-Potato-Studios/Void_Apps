@@ -1,47 +1,67 @@
-import { readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { createStyle, GLYPH } from "./cli-style.js";
+import { COMMANDS, renderHelp } from "./cli-help.js";
 import { MAX_EXPRESSIONS, MAX_SCHEDULES, buildCronManifest, detectDrift, emitCronManifest, readCronManifest } from "./manifest.js";
 import { appendActivityLog, readActivityLog, type ActivityStoreMode } from "./store.js";
 import type { CronActivityEntry, CronTriggerOptions } from "./types.js";
-import { nextDue, isValidTimezone, runScheduleOnce, startScheduleLoop } from "./schedule.js";
+import { nextDue, nextFires, isValidTimezone, runScheduleOnce, startScheduleLoop } from "./schedule.js";
 import { resolveTriggerTarget, triggerExpression, triggerJob } from "./trigger.js";
 import { findVoidConfig, inspectProject } from "./project.js";
 import { readProductionEvidence, writeProductionEvidence } from "./production.js";
 import type { CronProductionEvidence } from "./evidence.js";
 import { isCronExpression, scanCronFiles } from "./scan.js";
-import { allPreviewSupported } from "./cron-expr.js";
+import { allPreviewSupported, isPreviewSupported, validateCloudflareCron } from "./cron-expr.js";
+import { queueCounts, scanQueueFiles, validateQueueName } from "./queue-scan.js";
+import { sendQueueBatch, type QueueSendMessage } from "./queue-send.js";
 import { startTui, type TuiOptions } from "./tui/run.js";
 
-const USAGE = [
-  "usage: void-crons <list|check|emit|trigger|schedule|ui|doctor|verify> [app-path] [options]",
-  "",
-  "  list [app-path] [--json] [--all] [--tz ZONE]  scanned jobs + manifest state",
-  "  ui [app-path] [--tz ZONE] [--store sqlite|jsonl] [--origin URL] [--token T] [--retries N] [--timeout MS]  interactive dashboard + actions",
-  "  check [app-path] [--all]                      fail (1) on invalid jobs or limit overflow",
-  "  emit [app-path]                               write local inspection artifact (not consumed by void deploy)",
-  "  doctor [app-path] [--json] [--all] [--evidence FILE]  SDK/config and capability boundaries",
-  "  verify [app-path] --origin URL --transport framework --cron EXPR --evidence FILE --allow-remote --confirm-remote-write  write production proof",
-  "  trigger <job|expr> [app-path] [--origin URL] [--cron EXPR] [--token T] [--retries N] [--timeout MS] [--all]",
-  "  schedule [app-path] [--once] [--token T] [--tz ZONE] [--retries N] [--timeout MS] [--store sqlite|jsonl]  catch-up (--once) or live auto-fire loop",
-  "",
-  "  --origin URL   dev server origin (default http://localhost:5173)",
-  "  --cron EXPR    expression to fire when triggering by job name",
-  "  --token T      x-void-dev-trigger value (default: $VOID_DEV_TRIGGER; no token when unset)",
-  "  --tz ZONE      IANA timezone for schedule + previews (default UTC, matching Cloudflare)",
-  "  --retries N    retry attempts on 429/5xx/network (default 0); backoff 500ms doubling",
-  "  --timeout MS   per-attempt HTTP timeout (default 10000)",
-  "  --store MODE   activity store: sqlite (WAL, default) or jsonl (legacy file)",
-  "  --json         machine-readable output",
-  "  --all          run across apps/* with void.config.* or void.json",
-  "  --transport dev|framework  dev is loopback-only; framework requires --allow-remote and CRON_SECRET",
-  "  --allow-remote  explicit consent for framework dispatch (not endpoint verification)",
-  "  --confirm-remote-write  required by verify before any remote job dispatch",
-  "  --evidence FILE  production verification proof used by doctor/trigger",
-  "  --binding-mode local|remote|unknown  caller assertion; remote requires --allow-remote-bindings",
-  "  --allow-remote-bindings  consent when binding mode is asserted remote",
-  "  --limits managed|none  managed quota profile (default), or external limits checked separately",
-  "  --ci           quiet on success",
-].join("\n");
+const HELP_HINT = "Run void-crons --help for usage.";
+const COMMAND_NAMES = new Set(COMMANDS.map((command) => command.name));
+
+function getVersion(): string {
+  try {
+    const manifest = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+    const version = (JSON.parse(manifest) as { version?: string }).version;
+    return typeof version === "string" ? version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+const VERSION = getVersion();
+
+/** First-run guidance for an app with no cron jobs yet. */
+function renderOnboarding(style: ReturnType<typeof createStyle>): string[] {
+  const sample = [
+    'import { defineScheduled } from "void";',
+    'export const cron = "* * * * *";',
+    "export default defineScheduled(async () => {});",
+  ];
+  return [
+    `  ${style.bold("No cron jobs yet")} — here's how to start:`,
+    "",
+    `  ${style.dim("Add a file to")} crons/heartbeat.ts ${style.dim("to get started:")}`,
+    ...sample.map((line) => `    ${style.cyan(line)}`),
+    "",
+    `  ${style.dim("Then:")} void-crons list · void-crons check · void-crons emit`,
+    `  ${style.dim("Guide:")} https://void.cloud/guide/jobs`,
+  ];
+}
+
+/** Read an option's value, refusing a missing value or the next flag swallowing it. */
+function requireValue(args: string[], index: number, flag: string): string {
+  const value = args[index + 1];
+  if (value === undefined || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function requireInt(args: string[], index: number, flag: string, min: number): number {
+  const raw = requireValue(args, index, flag);
+  if (!/^\d+$/.test(raw)) throw new Error(`${flag} expects a non-negative integer`);
+  return Math.max(min, Number.parseInt(raw, 10));
+}
 
 function resolveApps(cwd: string, all: boolean, positional?: string): string[] {
   if (!all) return [positional ? resolve(cwd, positional) : cwd];
@@ -77,54 +97,87 @@ export async function run(
   let transport: string = "dev";
   let bindingMode: string = "unknown";
   let limits = "managed";
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === undefined) continue;
-    if (a === "--origin") {
-      origin = args[i + 1] ?? origin;
-      i++;
-    } else if (a === "--cron") {
-      cronOverride = args[i + 1];
-      i++;
-    } else if (a === "--token") {
-      token = args[i + 1];
-      i++;
-    } else if (a === "--tz") {
-      tz = args[i + 1];
-      i++;
-    } else if (a === "--retries") {
-      retries = Math.max(0, Number.parseInt(args[i + 1] ?? "0", 10) || 0);
-      i++;
-    } else if (a === "--timeout") {
-      timeoutMs = Math.max(1, Number.parseInt(args[i + 1] ?? "10000", 10) || 10_000);
-      i++;
-    } else if (a === "--transport") {
-      transport = args[++i] ?? "";
-    } else if (a === "--binding-mode") {
-      bindingMode = args[++i] ?? "";
-    } else if (a === "--limits") {
-      limits = args[++i] ?? "";
-    } else if (a === "--store") {
-      store = args[i + 1];
-      i++;
-    } else if (a === "--evidence") {
-      evidencePath = args[i + 1];
-      i++;
-    } else if (a.startsWith("--")) {
-      flags.add(a);
-    } else {
-      positionals.push(a);
+  let colorOverride: boolean | undefined;
+  let count: number | undefined;
+  let bodyText: string | undefined;
+  try {
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === undefined) continue;
+      if (a === "--origin") {
+        origin = requireValue(args, i, a);
+        i++;
+      } else if (a === "--cron") {
+        cronOverride = requireValue(args, i, a);
+        i++;
+      } else if (a === "--token") {
+        token = requireValue(args, i, a);
+        i++;
+      } else if (a === "--tz") {
+        tz = requireValue(args, i, a);
+        i++;
+      } else if (a === "--retries") {
+        retries = requireInt(args, i, a, 0);
+        i++;
+      } else if (a === "--timeout") {
+        timeoutMs = requireInt(args, i, a, 1);
+        i++;
+      } else if (a === "--count") {
+        count = requireInt(args, i, a, 1);
+        i++;
+      } else if (a === "--body") {
+        bodyText = requireValue(args, i, a);
+        i++;
+      } else if (a === "--transport") {
+        transport = requireValue(args, i, a);
+        i++;
+      } else if (a === "--binding-mode") {
+        bindingMode = requireValue(args, i, a);
+        i++;
+      } else if (a === "--limits") {
+        limits = requireValue(args, i, a);
+        i++;
+      } else if (a === "--store") {
+        store = requireValue(args, i, a);
+        i++;
+      } else if (a === "--evidence") {
+        evidencePath = requireValue(args, i, a);
+        i++;
+      } else if (a === "--color") {
+        colorOverride = true;
+      } else if (a === "--no-color") {
+        colorOverride = false;
+      } else if (a === "-v" || a === "-h") {
+        flags.add(a);
+      } else if (a.startsWith("--")) {
+        flags.add(a);
+      } else {
+        positionals.push(a);
+      }
     }
-  }
-  if (flags.has("--help") || positionals[0] === "help" || args.includes("-h")) {
-    console.log(USAGE);
+  } catch (error) {
+    console.log(`error: ${error instanceof Error ? error.message : String(error)}\n${HELP_HINT}`);
     return 2;
   }
-  const cmd = positionals[0] ?? "list";
-  // trigger takes the job selector first, then an optional app path:
-  // `trigger <job|expr> [app-path]`. All other commands take `[app-path]` first.
-  const target = cmd === "trigger" ? positionals[2] : positionals[1];
-  const triggerSelector = cmd === "trigger" ? positionals[1] : undefined;
+  const style = createStyle(colorOverride === undefined ? {} : { color: colorOverride });
+  if (flags.has("--version") || flags.has("-v")) {
+    console.log(`void-crons ${VERSION}`);
+    return 0;
+  }
+  const explicitCmd = positionals[0];
+  const cmd = explicitCmd ?? "list";
+  if (flags.has("--help") || flags.has("-h") || cmd === "help") {
+    const topic =
+      cmd === "help" ? positionals[1] : explicitCmd && COMMAND_NAMES.has(explicitCmd) ? explicitCmd : undefined;
+    console.log(renderHelp(topic, style));
+    return topic !== undefined && !COMMAND_NAMES.has(topic) ? 2 : 0;
+  }
+  // `trigger` and `next` take the selector first, then an optional app path:
+  // `<command> <job|expr> [app-path]`. Other commands take `[app-path]` first.
+  const selectorFirst = cmd === "trigger" || cmd === "next" || cmd === "queue-send";
+  const target = selectorFirst ? positionals[2] : positionals[1];
+  const selector = selectorFirst ? positionals[1] : undefined;
+  const triggerSelector = cmd === "trigger" ? selector : undefined;
   const all = flags.has("--all");
   const json = flags.has("--json");
   const ci = flags.has("--ci");
@@ -191,6 +244,14 @@ export async function run(
     console.log("error: ui is single-app and interactive — --json/--all are not supported");
     return 2;
   }
+  if (cmd === "next" && all) {
+    console.log("error: next is single-app — pass one app path");
+    return 2;
+  }
+  if (cmd === "queue-send" && all) {
+    console.log("error: queue-send is single-app — pass one app path");
+    return 2;
+  }
 
   let apps: string[];
   try {
@@ -213,7 +274,17 @@ export async function run(
     case "doctor": {
       for (const app of apps) {
         const report = { app: basename(app), ...inspectProject(app, { productionEvidence }) };
-        console.log(json ? JSON.stringify(report) : `${report.app}: config ${report.config ?? "missing"} · SDK ${report.sdkVersion ?? "not resolved"} (${report.sdkContract}) · bindings unknown · production trigger ${report.productionTrigger}${report.productionTarget ? ` @ ${report.productionTarget}` : ""} · manifest local-inspection`);
+        if (json) {
+          console.log(JSON.stringify(report));
+          continue;
+        }
+        const trigger =
+          report.productionTrigger === "verified"
+            ? style.green(report.productionTrigger)
+            : report.productionTrigger === "rejected"
+              ? style.red(report.productionTrigger)
+              : style.yellow(report.productionTrigger);
+        console.log(`${style.bold(report.app)}: config ${report.config ?? style.yellow("missing")} · SDK ${report.sdkVersion ?? style.yellow("not resolved")} (${report.sdkContract}) · bindings unknown · production trigger ${trigger}${report.productionTarget ? ` @ ${report.productionTarget}` : ""} · manifest local-inspection`);
       }
       return 0;
     }
@@ -292,25 +363,155 @@ export async function run(
         if (json) {
           console.log(JSON.stringify({ app: basename(app), format: 1, tz: tz ?? null, jobs: jobsJson, manifest }, null, 2));
         } else {
-          console.log(`${basename(app)}: ${jobs.length} job(s)${tz ? ` (tz ${tz})` : ""}`);
+          const appName = basename(app);
+          console.log(`${style.bold(appName)}: ${jobs.length} job(s)${tz ? ` (tz ${tz})` : ""}`);
+          if (jobs.length === 0 && !ci) {
+            for (const line of renderOnboarding(style)) console.log(line);
+          }
           for (const j of jobs) {
             const expr = j.status === "invalid" ? (j.error ?? "invalid") : j.expressions.join(", ");
-            const marker = j.status === "active" ? "●" : j.status === "disabled" ? "○" : "✕";
+            const marker =
+              j.status === "active"
+                ? style.green(GLYPH.active)
+                : j.status === "disabled"
+                  ? style.yellow(GLYPH.disabled)
+                  : style.red(GLYPH.invalid);
             const due = j.status === "active" ? nextFire(j.expressions, now, tz) : null;
             const preview = due !== null ? fmtNext(due, now) : j.status === "active" ? (allPreviewSupported(j.expressions) ? "never" : "preview n/a") : j.status === "disabled" ? "—" : "";
             console.log(`  ${marker} ${j.name}  ${expr}${preview ? `  ${preview}` : ""}`);
           }
-          if (!manifest && !ci) console.log("  (no void.crons.json — run void-crons emit)");
+          if (!manifest && !ci && jobs.length > 0) {
+            console.log(`  ${style.dim("(no void.crons.json — run void-crons emit)")}`);
+          }
           if (manifest) {
             const activity = readActivityLog(app, 5, storeMode);
             for (const entry of activity) {
-              console.log(`  ↳ ${entry.jobName} ${entry.cron} ${entry.status} ${(entry.durationMs / 1000).toFixed(1)}s`);
+              const status = entry.status === "success" ? style.green(entry.status) : style.red(entry.status);
+              console.log(`  ${style.dim(GLYPH.arrow)} ${entry.jobName} ${entry.cron} ${status} ${(entry.durationMs / 1000).toFixed(1)}s`);
             }
           }
         }
         if (jobs.some((j) => j.status === "invalid")) code = 1;
       }
       return code;
+    }
+    case "next": {
+      if (!selector) {
+        console.log(`error: next needs a cron expression or job name\n${HELP_HINT}\n${renderHelp("next", style)}`);
+        return 2;
+      }
+      const nextCount = Math.min(50, count ?? 5);
+      const now = Date.now();
+      let expressions: string[];
+      if (isCronExpression(selector)) {
+        const problem = validateCloudflareCron(selector);
+        if (problem !== null) {
+          console.log(`error: ${problem}`);
+          return 2;
+        }
+        if (!isPreviewSupported(selector)) {
+          console.log(`error: cron expression "${selector}" cannot be previewed locally`);
+          return 2;
+        }
+        expressions = [selector];
+      } else {
+        const app = apps[0];
+        if (!app) {
+          console.log("error: next needs one app path");
+          return 2;
+        }
+        const jobs = scanCronFiles(app, { disabled: readDisabled(app) });
+        const job = jobs.find((j) => j.name === selector || j.path === selector);
+        if (!job) {
+          console.log(`error: no job "${selector}" in ${basename(app)} (${basename(app)} scanned ${jobs.length} jobs) and selector is not a 5-field cron expression`);
+          return 1;
+        }
+        if (job.status !== "active") {
+          console.log(`error: job "${selector}" is ${job.status} — no next fire to preview`);
+          return 1;
+        }
+        expressions = job.expressions;
+      }
+      const zones = { tz };
+      const results = expressions.map((expression) => ({
+        expression,
+        fires: nextFires(expression, nextCount, { ...zones, fromMs: now }).map((ms) => new Date(ms).toISOString()),
+      }));
+      if (json) {
+        console.log(JSON.stringify({ format: 1, selector, tz: tz ?? "UTC", results }, null, 2));
+      } else {
+        console.log(`${selector} · next ${nextCount} fire(s) (${tz ?? "UTC"})`);
+        for (const { expression, fires } of results) {
+          if (expressions.length > 1) console.log(`  ${expression}`);
+          if (fires.length === 0) console.log(`    ${style.yellow("never — no due time found in the preview horizon")}`);
+          else for (const fire of fires) console.log(`    ${fire}`);
+        }
+      }
+      return 0;
+    }
+    case "queues": {
+      let code = 0;
+      for (const app of apps) {
+        const queues = scanQueueFiles(app);
+        const counts = queueCounts(queues);
+        if (json) {
+          console.log(JSON.stringify({ app: basename(app), format: 1, ok: counts.invalid === 0, counts, queues }, null, 2));
+        } else if (!ci || counts.invalid > 0) {
+          console.log(`${style.bold(basename(app))}: ${counts.queues} queue(s), ${counts.active} active`);
+          for (const queue of queues) {
+            const marker = queue.status === "active" ? style.green(GLYPH.active) : style.red(GLYPH.invalid);
+            const optionText = Object.entries(queue.options).map(([key, value]) => `${key}=${value}`).join(" ");
+            const error = queue.error ? `  ${style.red(queue.error)}` : "";
+            console.log(`  ${marker} ${queue.name}  ${queue.path}${optionText ? `  ${style.dim(optionText)}` : ""}${error}`);
+          }
+        }
+        if (counts.invalid > 0) code = 1;
+      }
+      return code;
+    }
+    case "queue-send": {
+      if (!selector) {
+        console.log(`error: queue-send needs a queue name\n${HELP_HINT}\n${renderHelp("queue-send", style)}`);
+        return 2;
+      }
+      const problem = validateQueueName(selector);
+      if (problem !== null) {
+        console.log(`error: ${problem}`);
+        return 2;
+      }
+      let body: unknown = {};
+      if (bodyText !== undefined) {
+        try {
+          body = JSON.parse(bodyText) as unknown;
+        } catch {
+          console.log("error: --body must be valid JSON");
+          return 2;
+        }
+      }
+      const app = apps[0] ?? cwd;
+      const known = scanQueueFiles(app);
+      const match = known.find((queue) => queue.name === selector);
+      if (match?.status === "invalid") {
+        console.log(`error: queue "${selector}" is invalid: ${match.error}`);
+        return 1;
+      }
+      if (known.length > 0 && !match && !ci) {
+        console.error(`warning: queue "${selector}" not found in ${basename(app)}; dispatching by name anyway`);
+      }
+      const messages: QueueSendMessage[] = Array.from({ length: Math.min(100, count ?? 1) }, () => ({ body }));
+      const res = await sendQueueBatch(selector, messages, {
+        origin,
+        devToken: token ?? process.env["VOID_DEV_TRIGGER"],
+        timeoutMs,
+        maxAttempts: retries + 1,
+      });
+      const label = basename(app);
+      if (json) console.log(JSON.stringify({ format: 1, app: label, queue: selector, ...res }, null, 2));
+      else if (!ci) {
+        if (res.ok) console.log(`${label}: dispatched ${selector} (${res.count} message(s), ${res.durationMs}ms, attempts ${res.attempts})`);
+        else console.log(`${label}: failed ${selector}: ${res.reason ?? "unknown"} (HTTP ${res.httpStatus}, attempts ${res.attempts})`);
+      }
+      return res.ok ? 0 : 1;
     }
     case "check": {
       let code = 0;
@@ -345,10 +546,10 @@ export async function run(
           code = 1;
           if (json) console.log(JSON.stringify({ app: basename(app), ok: false, format: 1, problems, drift }, null, 2));
           else {
-            console.log(`${basename(app)}: invalid`);
-            for (const p of problems) console.log(`  ✕ ${p}`);
+            console.log(`${style.red(`${GLYPH.fail} ${basename(app)}: invalid`)}`);
+            for (const p of problems) console.log(`  ${style.red(GLYPH.fail)} ${p}`);
           }
-          if (drift.length > 0 && !json && !ci) console.log(`  run void-crons emit to regenerate`);
+          if (drift.length > 0 && !json && !ci) console.log(`  ${style.dim("run void-crons emit to regenerate")}`);
         } else if (json) {
           console.log(
             JSON.stringify({
@@ -362,7 +563,7 @@ export async function run(
           );
         } else if (!ci) {
           console.log(
-            `${basename(app)}: clean (${manifest.jobs.length} jobs, ${manifest.expressionCount} expr, ${manifest.scheduleCount} sched)`,
+            `${style.green(GLYPH.ok)} ${basename(app)}: clean (${manifest.jobs.length} jobs, ${manifest.expressionCount} expr, ${manifest.scheduleCount} sched)`,
           );
         }
       }
@@ -383,7 +584,7 @@ export async function run(
     case "trigger": {
       const selector = triggerSelector;
       if (!selector) {
-        console.log(`error: trigger needs a job name or cron expression\n${USAGE}`);
+        console.log(`error: trigger needs a job name or cron expression\n${HELP_HINT}\n${renderHelp("trigger", style)}`);
         return 2;
       }
       let code = 0;
@@ -435,7 +636,7 @@ export async function run(
     }
     case "schedule": {
       if (apps.length > 1 && !flags.has("--once")) {
-        console.log(`error: live schedule runs one app at a time — pass an app path (batch catch-up: schedule --all --once)\n${USAGE}`);
+        console.log(`error: live schedule runs one app at a time — pass an app path (batch catch-up: schedule --all --once)\n${HELP_HINT}`);
         return 2;
       }
       let code = 0;
@@ -482,7 +683,7 @@ export async function run(
       return code;
     }
     default: {
-      console.log(USAGE);
+      console.log(`error: unknown command "${cmd}"\n${renderHelp(undefined, style)}`);
       return 2;
     }
   }

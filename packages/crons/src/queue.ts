@@ -1,3 +1,4 @@
+import { createPlatform, type CronPlatform } from "./platform.js";
 import {
   summarizeCronError,
   type CronErrorSummary,
@@ -62,6 +63,8 @@ export interface CronQueueCorrelationOptions<Body = unknown> {
   sender: CronQueueSender<Body>;
   store: CronLedgerStore;
   now?: () => number;
+  /** Host capabilities to use; defaults resolve from host globals. */
+  platform?: CronPlatform;
   project?: string;
   deployment?: string;
 }
@@ -122,7 +125,8 @@ async function tryRecord(store: CronLedgerStore, event: CronLedgerEvent): Promis
 export function createCronQueueCorrelation<Body = unknown>(
   options: CronQueueCorrelationOptions<Body>,
 ): CronQueueCorrelation<Body> {
-  const now = options.now ?? Date.now;
+  const platform = options.platform ?? createPlatform();
+  const now = options.now ?? platform.now;
 
   const publish = async (input: CronQueuePublishInput<Body>): Promise<CronQueuePublishResult<Body>> => {
     const attempt = input.attempt ?? 1;

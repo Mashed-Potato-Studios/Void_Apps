@@ -1,3 +1,5 @@
+import { createPlatform, type CronPlatform } from "./platform.js";
+
 export interface CronScheduledController {
   scheduledTime: number;
   cron: string;
@@ -75,7 +77,7 @@ export interface CronLedgerStore {
 const SECRET_PATTERNS: RegExp[] = [
   /\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi,
   /\b(token|secret|password|authorization|api[-_]?key)\b\s*[:=]\s*["']?[^\s,;}]+/gi,
-  /\bx-void-[a-z-]+\s*:\s*[^\s,;}]+/gi,
+  /\bx-void-[a-z-]+\s*[:=]\s*[^\s,;}]+/gi,
 ];
 
 export function redactCronText(value: string, maxLength = 300): string {
@@ -148,6 +150,8 @@ export interface CronInstrumentationOptions<
   onTelemetryError?: (error: unknown, stage: CronTelemetryStage) => void | Promise<void>;
   now?: () => number;
   createId?: () => string;
+  /** Host capabilities to use; defaults resolve from host globals. */
+  platform?: CronPlatform;
   /** Stable application-owned idempotency key; defaults to a fresh random ID. */
   idempotencyKey?: string | ((...args: Arguments) => string);
 }
@@ -176,6 +180,7 @@ export function instrumentScheduled<
   handler: (...args: Arguments) => Result,
   options: CronInstrumentationOptions<Arguments>,
 ): (...args: Arguments) => Promise<Awaited<Result> | undefined> {
+  const platform = options.platform ?? createPlatform();
   const observe = async (error: unknown, stage: CronTelemetryStage): Promise<void> => {
     try {
       await options.onTelemetryError?.(error, stage);
@@ -184,10 +189,10 @@ export function instrumentScheduled<
 
   const time = async (): Promise<number> => {
     try {
-      return (options.now ?? Date.now)();
+      return (options.now ?? platform.now)();
     } catch (error) {
       await observe(error, "clock");
-      return Date.now();
+      return platform.now();
     }
   };
 
@@ -222,7 +227,7 @@ export function instrumentScheduled<
         ? options.idempotencyKey(...args)
         : options.idempotencyKey;
       run = {
-        id: id ?? (options.createId ?? (() => crypto.randomUUID()))(),
+        id: id ?? (options.createId ?? platform.newId)(),
         jobName,
         cron,
         scheduledTime,

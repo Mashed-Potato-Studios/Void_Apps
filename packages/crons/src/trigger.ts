@@ -169,6 +169,7 @@ export async function triggerExpression(
         };
       }
     } catch (e) {
+      // Never surface raw fetch error text here: it can contain credentials.
       lastError = e instanceof Error && e.message === "aborted" ? "aborted; dispatch outcome unknown" : "transport failed; dispatch outcome unknown";
       if (attempt >= maxAttempts) {
         return {

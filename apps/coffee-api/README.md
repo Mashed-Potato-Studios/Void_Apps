@@ -18,6 +18,7 @@ clients of this service.
 | `GET /api/admin/crons` | bearer | Job registry + last 50 legacy D1 runs |
 | `GET /api/admin/crons/ledger` | bearer | New `void-crons/d1` ledger events (`?limit=1..200`) |
 | `POST /api/admin/crons/:name/run` | bearer | Run a job now, recorded as `manual` |
+| `POST /api/admin/queues` | bearer | Enqueue an `order-events` message via the typed `void/queues` proxy |
 
 Every response uses `{ success, data }` or `{ success, error: { code, message } }`.
 Admin routes require `Authorization: Bearer $COFFEE_ADMIN_TOKEN`.
@@ -52,6 +53,55 @@ Job logic lives in `src/jobs/*`; the files in `crons/` are thin
 expressions in `crons/*.ts` must stay string literals (Void requirement); the
 registry's copy is what the admin displays.
 
+## Queues
+
+`queues/order-events.ts` is a `defineQueue<OrderEvent>` consumer named
+`order-events` by its path. It accepts order lifecycle events (`created` /
+`restocked`), logs each delivery, and calls `message.ack()`; a bad body is
+retried with a 10s delay. Batch size 25, timeout 5s, 3 retries, retry delay 10s.
+Ack/retry policy and idempotency are app-owned — retried deliveries can run
+more than once.
+
+Two ways to produce a message locally:
+
+```bash
+# Typed proxy (auth required; native Void dev invokes the consumer automatically)
+curl -X POST http://localhost:5175/api/admin/queues \
+  -H "Authorization: Bearer crew-coffee-dev-admin-token" \
+  -H 'content-type: application/json' \
+  -d '{"orderId":"demo-1","type":"created","itemCount":2,"totalCents":1250}'
+
+# void-crons dev endpoint (works in framework adapters too).
+# Requires the dev server to be running and its printed trigger token.
+VOID_DEV_TRIGGER=<token-from-boot-log> pnpm --filter @void-monorepo/coffee-api queues:send
+```
+
+The dev server prints a paste-ready `POST /__void/queue` curl command with the
+current token at boot (`[void] Detected 5 crons and 1 queue`). `queue-send` reads
+`$VOID_DEV_TRIGGER` automatically, or pass `--token <token>`. Without a running
+server you get `HTTP 0` / `transport failed`; without a valid token you get
+`HTTP 401`. The UUID after `-H "x-void-dev-trigger: …"` in the printed curl is
+the actual token (not a placeholder). In this app it has been stable across
+dev boots; regenerate it if the dev server reports a different one.
+
+Inspect the queue with the new `void-crons` scanner:
+
+```bash
+pnpm --filter @void-monorepo/coffee-api queues:list
+pnpm --filter @void-monorepo/coffee-api exec void-crons queues --json
+```
+
+The queue also appears inside the cron dashboard: run `pnpm exec void-crons ui`
+from this directory (a globally installed `void-crons` may be an older build),
+press `Q` to swap the lower pane to queues, and `↵` to send a demo message.
+Start `pnpm dev` first and pass the token it prints via `--token` or
+`VOID_DEV_TRIGGER`; otherwise triggers fail with 401. The TUI shows a
+`no dev token` hint until one is configured.
+
+The generated `.void/queues.d.ts` is fed to the `void/queues` proxy by
+`src/void-queues.d.ts` (void 1.1.11 does not augment the module itself). `void build`
+regenerates the queue types after adding or renaming a consumer.
+
 ## Local setup
 
 ```bash
@@ -70,7 +120,12 @@ Inspect the scheduler:
 pnpm --filter @void-monorepo/coffee-api crons:list
 pnpm --filter @void-monorepo/coffee-api crons:check
 pnpm --filter @void-monorepo/coffee-api crons:emit
+pnpm --filter @void-monorepo/coffee-api crons:ui   # TUI with the correct port (5175)
 ```
+
+`crons:ui` passes `--origin http://localhost:5175`. Launching `void-crons ui`
+without it uses the generic default `localhost:5173`, so every trigger fails
+with a transport error.
 
 Trigger a job locally with the token printed at boot:
 

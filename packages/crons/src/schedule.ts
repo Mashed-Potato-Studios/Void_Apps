@@ -88,6 +88,47 @@ export function nextDue(expressions: string[], fromMs: number, toMs: number, opt
   }).sort((left, right) => left.dueMs - right.dueMs);
 }
 
+const NEXT_STEP_MS = 60 * 60 * 1000;
+/** Expand up to ~5 years so rare yearly forms still produce a preview. */
+const MAX_NEXT_STEP_MS = 5 * 366 * 24 * 60 * 60 * 1000;
+const MAX_NEXT_FIRES = 50;
+
+export interface NextFiresOptions extends CronScheduleZone {
+  /** Earliest instant to look after (default now). */
+  fromMs?: number;
+}
+
+/** Next `count` due times after `fromMs`, strictly increasing and UTC timestamps.
+ *
+ *  Uses a growing window rather than one large horizon, so dense expressions
+ *  (`* * * * *`) stay cheap while rare ones ( yearly, Quartz `LW`) still resolve.
+ *  Returns fewer than `count` (possibly none) for impossible dates such as
+ *  Feb 30 — the same non-throwing behavior as the rest of the preview API. */
+export function nextFires(expr: string, count: number, opts: NextFiresOptions = {}): number[] {
+  const limit = Math.min(MAX_NEXT_FIRES, Math.max(1, Math.floor(count)));
+  const fromMs = opts.fromMs ?? Date.now();
+  const out: number[] = [];
+  let cursor = fromMs;
+  let step = NEXT_STEP_MS;
+  while (out.length < limit) {
+    let dueMs: number | undefined;
+    try {
+      dueMs = nextDue([expr], cursor, cursor + step, opts)[0]?.dueMs;
+    } catch {
+      break;
+    }
+    if (dueMs === undefined) {
+      if (step >= MAX_NEXT_STEP_MS) break;
+      step = Math.min(MAX_NEXT_STEP_MS, step * 4);
+      continue;
+    }
+    out.push(dueMs);
+    cursor = dueMs;
+    step = NEXT_STEP_MS;
+  }
+  return out;
+}
+
 /** Most recent due time per expression inside the window (catch-up semantics). */
 export function latestDue(expressions: string[], fromMs: number, toMs: number, opts: CronScheduleZone = {}): CronDue[] {
   const all = computeDue(expressions, fromMs, toMs, opts);

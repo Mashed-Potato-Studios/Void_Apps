@@ -6,9 +6,11 @@
   },
   "include": [
     ".void/env.d.ts",
+    ".void/queues.d.ts",
     "db/**/*",
     "routes/**/*",
     "crons/**/*",
+    "queues/**/*",
     "middleware/**/*",
     "src/**/*",
     "env.ts",

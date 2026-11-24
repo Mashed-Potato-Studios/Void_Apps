@@ -3,6 +3,8 @@
  * `defineDurableState` method/store; this module only performs short,
  * serialized state transitions and runs business work outside them.
  */
+
+import { createPlatform, type CronPlatform } from "./platform.js";
 export interface CronCoordinationStateStore {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
@@ -22,6 +24,8 @@ export interface CronCoordinatorOptions {
   store: CronCoordinationStateStore;
   now?: () => number;
   createId?: () => string;
+  /** Host capabilities to use; defaults resolve from host globals. */
+  platform?: CronPlatform;
 }
 
 export interface CronLeaseResult<Result> {
@@ -69,8 +73,9 @@ function assertTtl(ttlMs: number): number {
  * body inside a state transition.
  */
 export function createCronCoordinator(options: CronCoordinatorOptions): CronCoordinator {
-  const now = options.now ?? Date.now;
-  const createId = options.createId ?? (() => crypto.randomUUID());
+  const platform = options.platform ?? createPlatform();
+  const now = options.now ?? platform.now;
+  const createId = options.createId ?? platform.newId;
   let tail: Promise<unknown> = Promise.resolve();
   const serialized = <T>(work: () => Promise<T>): Promise<T> => {
     const next = tail.then(work, work);

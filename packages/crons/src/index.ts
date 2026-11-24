@@ -4,3 +4,7 @@ export * from "./manifest.js";
 export * from "./trigger.js";
 export * from "./store.js";
 export * from "./schedule.js";
+export * from "./platform.js";
+export * from "./memory.js";
+export * from "./queue-scan.js";
+export * from "./queue-send.js";

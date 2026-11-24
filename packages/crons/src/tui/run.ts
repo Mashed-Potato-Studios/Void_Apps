@@ -1,8 +1,10 @@
 import { statSync } from "node:fs";
 import { emitKeypressEvents } from "node:readline";
+import { resolveColor } from "../cli-style.js";
 import { emitCronManifest } from "../manifest.js";
 import { collectScheduleTargets, runScheduleOnce, tickSchedule, type ScheduleRun } from "../schedule.js";
 import { appendActivityLog, type ActivityStoreMode } from "../store.js";
+import { sendQueueBatch, type QueueSendResult } from "../queue-send.js";
 import { triggerJob } from "../trigger.js";
 import type { CronJob, CronTriggerOptions, CronTriggerResult } from "../types.js";
 import { loadSnapshot } from "./data.js";
@@ -11,6 +13,7 @@ import {
   createState,
   reduce,
   selectedJob,
+  selectedQueue,
   type JobView,
   type Msg,
   type Snapshot,
@@ -36,6 +39,7 @@ export interface TuiActions {
   trigger(job: JobView, signal: AbortSignal, jobs?: readonly CronJob[]): Promise<CronTriggerResult[]>;
   emit(disabled: string[]): { path: string };
   catchUp(disabled: string[], signal: AbortSignal): Promise<ScheduleRun>;
+  sendQueue(queue: string, signal: AbortSignal): Promise<QueueSendResult>;
 }
 
 interface InputStream {
@@ -96,6 +100,14 @@ function createActions(opts: TuiOptions): TuiActions {
       return results;
     },
     emit: (disabled) => emitCronManifest(opts.appPath, { disabled }),
+    sendQueue: async (queue, signal) =>
+      sendQueueBatch(queue, [{ body: {} }], {
+        origin: opts.origin,
+        ...(opts.devToken ? { devToken: opts.devToken } : {}),
+        timeoutMs: opts.timeoutMs,
+        maxAttempts: opts.retries + 1,
+        signal,
+      }),
     catchUp: (disabled, signal) =>
       runScheduleOnce(opts.appPath, {
         ...opts,
@@ -121,7 +133,8 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
   const stderr = deps.stderr ?? process.stderr;
   const now = deps.now ?? Date.now;
   const actions = deps.actions ?? createActions(opts);
-  const color = opts.color ?? !process.env["NO_COLOR"];
+  // Same precedence as the non-interactive CLI: explicit, FORCE_COLOR, NO_COLOR, then TTY.
+  const color = opts.color ?? resolveColor({ isTTY: stdout.isTTY });
   const tickImpl = deps.tickSchedule ?? tickSchedule;
   const watchImpl =
     deps.watch ?? ((appPath: string, onChange: () => void) => startWatcher(appPath, onChange));
@@ -150,6 +163,7 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
     appPath: opts.appPath,
     origin: opts.origin,
     storeMode: opts.storeMode,
+    ...(opts.devToken ? { devToken: opts.devToken } : {}),
     ...(opts.tz ? { tz: opts.tz } : {}),
     color,
     snapshot,
@@ -333,7 +347,11 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
         if (settled) return;
         const fired = results.filter((result) => result.ok).length;
         const failed = results.filter((result) => !result.ok && !result.skipped);
-        if (results.every((result) => result.skipped)) {
+        if (failed.some((result) => result.httpStatus === 401)) {
+          refresh("error", "dispatch rejected (401) — restart ui with --token or set VOID_DEV_TRIGGER");
+        } else if (failed.some((result) => result.httpStatus === 0)) {
+          refresh("error", `dispatch failed — is the dev server running at ${opts.origin}?`);
+        } else if (results.every((result) => result.skipped)) {
           refresh("error", results[0]?.reason ?? "dispatch skipped");
         } else if (failed.length === 0) {
           refresh("success", `fired ${job.name} (${fired}/${results.length})`);
@@ -341,6 +359,35 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
           const reason = failed[0]?.entry?.error ?? failed[0]?.reason ?? "unknown";
           refresh("error", `fired ${job.name}: ${fired} ok, ${failed.length} failed (${reason})`);
         }
+      } catch (error) {
+        if (settled) return;
+        setStatus("error", error instanceof Error ? error.message : String(error));
+      }
+    };
+
+    const actQueueSend = async (): Promise<void> => {
+      const queue = selectedQueue(state);
+      if (!queue) {
+        setStatus("error", "no queue selected");
+        return;
+      }
+      if (queue.status === "invalid") {
+        setStatus("error", queue.error ?? `queue "${queue.name}" is invalid`);
+        return;
+      }
+      busy = true;
+      aborter = new AbortController();
+      state = reduce(state, { type: "busy", label: `send ${queue.name}` });
+      draw();
+      try {
+        const result = await actions.sendQueue(queue.name, aborter.signal);
+        if (settled) return;
+        if (result.ok) refresh("success", `sent ${queue.name} (${result.count} message(s), ${result.durationMs}ms)`);
+        else if (result.httpStatus === 401) {
+          setStatus("error", "queue send rejected (401) — restart ui with --token or set VOID_DEV_TRIGGER");
+        } else if (result.httpStatus === 0) {
+          setStatus("error", `queue send failed — is the dev server running at ${opts.origin}?`);
+        } else setStatus("error", `send ${queue.name} failed: ${result.reason ?? `HTTP ${result.httpStatus}`}`);
       } catch (error) {
         if (settled) return;
         setStatus("error", error instanceof Error ? error.message : String(error));
@@ -366,7 +413,11 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       try {
         const run = await actions.catchUp([...state.disabled], aborter.signal);
         if (settled) return;
-        refresh("success", `caught up (${run.fired.length} fired, ${run.skipped.length} skipped)`);
+        if (run.fired.some((entry) => entry.error?.includes("HTTP 401"))) {
+          refresh("error", "catch-up rejected (401) — restart ui with --token or set VOID_DEV_TRIGGER");
+        } else {
+          refresh("success", `caught up (${run.fired.length} fired, ${run.skipped.length} skipped)`);
+        }
       } catch (error) {
         if (settled) return;
         setStatus("error", error instanceof Error ? error.message : String(error));
@@ -396,7 +447,10 @@ export async function startTui(opts: TuiOptions, deps: TuiDeps = {}): Promise<nu
       }
       state = reduce(state, msg);
       draw();
-      if (msg.type === "trigger") void actTrigger();
+      if (msg.type === "trigger") {
+        if (state.pane === "queues") void actQueueSend();
+        else void actTrigger();
+      }
       else if (msg.type === "emit") actEmit();
       else if (msg.type === "catchup") void actCatchUp();
       else if (msg.type === "refresh") refresh("info", "rescanned");

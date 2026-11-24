@@ -1,3 +1,4 @@
+import type { QueueDefinition } from "../queue-scan.js";
 import type { CronActivityEntry, CronJob } from "../types.js";
 
 export interface JobView extends CronJob {
@@ -16,7 +17,10 @@ export interface Snapshot {
   activity: CronActivityEntry[];
   disabled: string[];
   scannedAt: number;
+  queues: QueueDefinition[];
 }
+
+export type TuiPane = "activity" | "queues";
 
 export type StatusKind = "info" | "success" | "error";
 
@@ -33,10 +37,14 @@ export interface TuiState {
   tz?: string;
   origin: string;
   storeMode: "sqlite" | "jsonl";
+  hasToken: boolean;
   jobs: JobView[];
   manifest: ManifestState;
   drift: string[];
   activity: CronActivityEntry[];
+  queues: QueueDefinition[];
+  pane: TuiPane;
+  queueSelected: number;
   selected: number;
   scroll: number;
   disabled: Set<string>;
@@ -51,11 +59,15 @@ export interface TuiState {
   filterInput: boolean;
   sort: SortMode;
   detail: boolean;
+  help: boolean;
 }
 
 export type Msg =
   | { type: "loaded"; snapshot: Snapshot }
   | { type: "move"; delta: number }
+  | { type: "pane-toggle" }
+  | { type: "move-page"; direction: -1 | 1 }
+  | { type: "move-to"; position: "first" | "last" }
   | { type: "resize"; width: number; height: number }
   | { type: "toggle" }
   | { type: "trigger" }
@@ -83,11 +95,15 @@ export type Msg =
   | { type: "filter-clear" }
   | { type: "sort-cycle" }
   | { type: "detail-toggle" }
+  | { type: "help-toggle" }
   | { type: "escape" };
 
+// A frame costs 9 fixed lines (2 header, 2 rules, detail, keys, status, pane header/rule).
+// Give the activity pane roughly a third of the remaining space so tall terminals
+// show more history without squeezing the job list on normal 24-row screens.
 export function activityRowsForHeight(height: number): number {
   if (height < 14) return 0;
-  return Math.min(5, Math.max(1, height - 9));
+  return Math.min(16, Math.max(1, Math.floor((height - 9) / 3)));
 }
 
 export function jobRowsForHeight(height: number): number {
@@ -102,6 +118,7 @@ export function createState(input: {
   storeMode: "sqlite" | "jsonl";
   tz?: string;
   color: boolean;
+  devToken?: string;
   snapshot: Snapshot;
   width: number;
   height: number;
@@ -111,12 +128,16 @@ export function createState(input: {
     appName: input.snapshot.appName,
     origin: input.origin,
     storeMode: input.storeMode,
+    hasToken: typeof input.devToken === "string" && input.devToken.length > 0,
     ...(input.tz ? { tz: input.tz } : {}),
     color: input.color,
     jobs: input.snapshot.jobs,
     manifest: input.snapshot.manifest,
     drift: input.snapshot.drift,
     activity: input.snapshot.activity,
+    queues: input.snapshot.queues ?? [],
+    pane: "activity",
+    queueSelected: 0,
     disabled: new Set(input.snapshot.disabled),
     selected: 0,
     scroll: 0,
@@ -135,6 +156,7 @@ export function createState(input: {
     filterInput: false,
     sort: "next",
     detail: false,
+    help: false,
   };
 }
 
@@ -182,6 +204,10 @@ export function selectedJob(state: TuiState): JobView | undefined {
   return visibleJobs(state)[state.selected];
 }
 
+export function selectedQueue(state: TuiState): QueueDefinition | undefined {
+  return state.queues[state.queueSelected];
+}
+
 export function nextActiveFireMs(state: TuiState): number | null {
   let next: number | null = null;
   for (const job of state.jobs) {
@@ -214,6 +240,8 @@ export function reduce(state: TuiState, msg: Msg): TuiState {
         manifest: msg.snapshot.manifest,
         drift: msg.snapshot.drift,
         activity: msg.snapshot.activity,
+        queues: msg.snapshot.queues ?? [],
+        queueSelected: clamp(state.queueSelected, 0, Math.max(0, (msg.snapshot.queues?.length ?? 0) - 1)),
         disabled: new Set(msg.snapshot.disabled),
         scannedAt: msg.snapshot.scannedAt,
         busy: null,
@@ -226,9 +254,40 @@ export function reduce(state: TuiState, msg: Msg): TuiState {
       return { ...next, selected, scroll: keepVisible(next, selected, state.scroll) };
     }
     case "move": {
+      if (state.pane === "queues") {
+        const count = state.queues.length;
+        if (count === 0) return { ...state, status: null };
+        return { ...state, queueSelected: clamp(state.queueSelected + msg.delta, 0, count - 1), status: null };
+      }
       const count = visibleJobs(state).length;
       if (count === 0) return { ...state, status: null };
       const selected = clamp(state.selected + msg.delta, 0, count - 1);
+      return { ...state, selected, scroll: keepVisible(state, selected, state.scroll), status: null };
+    }
+    case "pane-toggle":
+      return { ...state, pane: state.pane === "queues" ? "activity" : "queues", status: null };
+    case "move-page": {
+      if (state.pane === "queues") {
+        const count = state.queues.length;
+        if (count === 0) return { ...state, status: null };
+        const page = Math.max(1, activityRowsForHeight(state.height));
+        return { ...state, queueSelected: clamp(state.queueSelected + msg.direction * page, 0, count - 1), status: null };
+      }
+      const count = visibleJobs(state).length;
+      if (count === 0) return { ...state, status: null };
+      const page = Math.max(1, jobRowsForHeight(state.height) - 1);
+      const selected = clamp(state.selected + msg.direction * page, 0, count - 1);
+      return { ...state, selected, scroll: keepVisible(state, selected, state.scroll), status: null };
+    }
+    case "move-to": {
+      if (state.pane === "queues") {
+        const count = state.queues.length;
+        if (count === 0) return { ...state, status: null };
+        return { ...state, queueSelected: msg.position === "first" ? 0 : count - 1, status: null };
+      }
+      const count = visibleJobs(state).length;
+      if (count === 0) return { ...state, status: null };
+      const selected = msg.position === "first" ? 0 : count - 1;
       return { ...state, selected, scroll: keepVisible(state, selected, state.scroll), status: null };
     }
     case "resize": {
@@ -296,9 +355,11 @@ export function reduce(state: TuiState, msg: Msg): TuiState {
       });
     }
     case "detail-toggle":
-      return { ...state, detail: !state.detail, status: null };
+      return { ...state, detail: !state.detail, help: false, status: null };
+    case "help-toggle":
+      return { ...state, help: !state.help, detail: false, filterInput: false, status: null };
     case "escape":
-      return { ...state, detail: false, status: null };
+      return { ...state, detail: false, help: false, pane: "activity", status: null };
     case "loop-toggle":
       return state;
     case "loop-start":

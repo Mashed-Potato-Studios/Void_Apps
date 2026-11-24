@@ -1,3 +1,4 @@
+import type { QueueDefinition } from "../queue-scan.js";
 import type { CronActivityEntry } from "../types.js";
 import {
   activityRowsForHeight,
@@ -36,6 +37,23 @@ function rule(width: number): string {
   return "─".repeat(width);
 }
 
+function center(text: string, width: number): string {
+  const length = [...text].length;
+  return `${" ".repeat(Math.max(0, Math.floor((width - length) / 2)))}${text}`;
+}
+
+/** Fills otherwise-empty job rows on tall terminals with a little local flavor. */
+const COFFEE_MUG = [
+  "      ( (",
+  "       ) )",
+  "    ...........",
+  "    |         |]",
+  "    |  VOID   | |",
+  "    \\       /",
+  "     `-----'",
+  "   ~ freshly brewed locally ~",
+];
+
 function twoCol(left: string, right: string, width: number): string {
   const l = truncate(left, width);
   const r = truncate(right, width);
@@ -52,13 +70,33 @@ function originLabel(origin: string): string {
   }
 }
 
-function clock(ms: number): string {
-  return new Date(ms).toTimeString().slice(0, 8);
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+/** Wall-clock time in the same zone the previews use (UTC unless --tz is set). */
+function timeIn(ms: number, tz: string): string {
+  let formatter = timeFormatters.get(tz);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hourCycle: "h23",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    timeFormatters.set(tz, formatter);
+  }
+  const parts = formatter.formatToParts(new Date(ms));
+  const part = (name: string): string => parts.find((item) => item.type === name)?.value ?? "00";
+  return `${part("hour")}:${part("minute")}:${part("second")}`;
 }
 
-function hhmm(iso: string): string {
+function clock(ms: number, tz: string): string {
+  return timeIn(ms, tz);
+}
+
+function hhmm(iso: string, tz: string): string {
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? "--:--" : date.toTimeString().slice(0, 5);
+  return Number.isNaN(date.getTime()) ? "--:--" : timeIn(date.getTime(), tz).slice(0, 5);
 }
 
 function fmtNext(job: JobView, nowMs: number): string {
@@ -105,11 +143,11 @@ function detailLine(job: JobView | undefined, nowMs: number, width: number): str
   return pad(` ${parts.join(" · ")}`, width);
 }
 
-function detailBody(job: JobView | undefined, nowMs: number, width: number): string[] {
+function detailBody(job: JobView | undefined, nowMs: number, width: number, tz: string): string[] {
   if (!job) return [pad(" no job selected", width)];
   const last = job.last;
   const lastLine = last
-    ? `${last.status} · ${last.durationMs}ms · ${hhmm(last.finishedAt)} · ${last.source}${
+    ? `${last.status} · ${last.durationMs}ms · ${hhmm(last.finishedAt, tz)} · ${last.source}${
         last.itemsProcessed !== undefined ? ` · items ${last.itemsProcessed}` : ""
       }`
     : "—";
@@ -152,32 +190,61 @@ function jobRow(job: JobView, selected: boolean, width: number, nowMs: number, c
   return `${padded.slice(0, index)}${style(marker.text, marker.code, true)}${padded.slice(index + marker.text.length)}`;
 }
 
-function activityRow(entry: CronActivityEntry, width: number): string {
+function activityRow(entry: CronActivityEntry, width: number, tz: string): string {
   const status = entry.kind === "dispatch" && entry.status === "success" ? "ack" : entry.status === "success" ? "ok" : entry.status;
   return pad(
-    truncate(`  ↳ ${hhmm(entry.finishedAt)} ${entry.jobName} ${entry.cron} ${status} ${entry.durationMs}ms`, width),
+    truncate(`  ↳ ${hhmm(entry.finishedAt, tz)} ${entry.jobName} ${entry.cron} ${status} ${entry.durationMs}ms`, width),
     width,
   );
 }
 
+function queueRow(queue: QueueDefinition, selected: boolean, width: number, color: boolean): string {
+  const marker = queue.status === "active" ? { text: "●", code: GREEN } : { text: "✕", code: RED };
+  const options = Object.entries(queue.options).map(([key, value]) => `${key}=${value}`).join(" ");
+  const line = `  ${selected ? ">" : " "}${marker.text} ${pad(queue.name, 22)} ${pad(queue.path, 26)}${options}${queue.error ? ` ${queue.error}` : ""}`;
+  const padded = pad(line, width);
+  if (selected) return style(padded, INVERT, color);
+  if (!color) return padded;
+  const index = padded.indexOf(marker.text);
+  if (index === -1) return padded;
+  return `${padded.slice(0, index)}${style(marker.text, marker.code, true)}${padded.slice(index + marker.text.length)}`;
+}
+
+function queuePane(state: TuiState, width: number, rows: number, color: boolean): string[] {
+  const lines: string[] = [pad(` Queues (${state.queues.length}) · Q activity`, width)];
+  if (state.queues.length === 0) {
+    lines.push(pad(" no queues in queues/", width));
+  } else {
+    const visible = state.queues.slice(0, rows);
+    for (let i = 0; i < visible.length; i++) {
+      lines.push(queueRow(visible[i]!, i === state.queueSelected, width, color));
+    }
+  }
+  const used = state.queues.length === 0 ? 1 : Math.min(rows, state.queues.length);
+  for (let i = used; i < rows; i++) lines.push(" ".repeat(width));
+  lines.push(rule(width));
+  return lines;
+}
+
 function keysLine(state: TuiState, width: number): string {
+  if (state.help) return truncate(" ? close · esc close · q quit", width);
   if (state.filterInput) {
     return truncate(` filter: ${state.filter}  · enter apply · esc clear`, width);
   }
-  const full = " ↑↓/jk move · enter trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r refresh · q quit";
-  const mid = " ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r · q";
-  const small = " ↑↓ move · ↵ · d e c s / o v r q";
+  const full = " ↑↓/jk move · PgUp/PgDn page · g/G ends · enter trigger/send · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · Q queues · ? help · r refresh · q quit";
+  const mid = " ↑↓ · ↵ fire · d toggle · e emit · c catchup · s live · / filter · o sort · v · Q queues · ? · r · q";
+  const small = " ↑↓ move · ↵ · d e c s / o v Q ? r q";
   return truncate(width >= 112 ? full : width >= 64 ? mid : small, width);
 }
 
-function statusLine(state: TuiState, width: number, nowMs: number): string {
+function statusLine(state: TuiState, width: number, nowMs: number, color: boolean): string {
   if (state.busy) return pad(` status: ${state.busy}…`, width);
   if (state.status) {
     const label =
       state.status.kind === "error" ? "error: " : state.status.kind === "success" ? "ok: " : "";
     const text = pad(` status: ${label}${state.status.message}`, width);
-    if (state.status.kind === "error") return style(text, RED, state.color);
-    if (state.status.kind === "success") return style(text, GREEN, state.color);
+    if (state.status.kind === "error") return style(text, RED, color);
+    if (state.status.kind === "success") return style(text, GREEN, color);
     return text;
   }
   if (state.loop.running) {
@@ -185,14 +252,52 @@ function statusLine(state: TuiState, width: number, nowMs: number): string {
     const when = next === null ? "next —" : `next in ${fmtIn(next, nowMs)}`;
     return pad(` status: live · ${state.loop.firedTotal} fired · ${when}`, width);
   }
+  if (!state.hasToken) {
+    return pad(" status: ready · no dev token — restart with --token or set VOID_DEV_TRIGGER", width);
+  }
   return pad(" status: ready", width);
+}
+
+const HELP_ROWS: Array<[key: string, action: string]> = [
+  ["↑↓ / j k", "move selection"],
+  ["PgUp/PgDn", "page through jobs"],
+  ["g / G", "first / last job"],
+  ["enter", "trigger job / send to selected queue"],
+  ["d", "toggle enabled (session only)"],
+  ["e", "emit manifest (persists toggles)"],
+  ["c", "catch up missed fires (24h)"],
+  ["s", "start/stop the live loop"],
+  ["/", "filter by name, path, or expression"],
+  ["o", "cycle sort: next / name / status"],
+  ["v", "show job detail"],
+  ["Q", "toggle the queues pane"],
+  ["?", "toggle this help"],
+  ["r", "rescan jobs, manifest, and activity"],
+  ["q / Ctrl-C", "quit"],
+];
+
+function helpView(state: TuiState, width: number, height: number, nowMs: number, color: boolean, tz: string): string[] {
+  const lines: string[] = [
+    twoCol(` void-crons · ${state.appName}`, `help · tz ${tz} · ${originLabel(state.origin)}`, width),
+    rule(width),
+  ];
+  const available = Math.max(0, height - lines.length - 2);
+  for (let i = 0; i < available; i++) {
+    const [key, action] = HELP_ROWS[i] ?? ["", ""];
+    lines.push(pad(`  ${key.padEnd(12)} ${action}`, width));
+  }
+  lines.push(pad(keysLine(state, width), width));
+  lines.push(statusLine(state, width, nowMs, color));
+  return lines;
 }
 
 export function render(state: TuiState, nowMs: number, color = state.color): string[] {
   const width = Math.max(20, state.width);
   const height = Math.max(8, state.height);
-  const lines: string[] = [];
+  const zone = state.tz ?? "UTC";
+  if (state.help) return helpView(state, width, height, nowMs, color, zone);
 
+  const lines: string[] = [];
   const active = state.jobs.filter((job) => job.status === "active");
   const expressions = new Set(active.flatMap((job) => job.expressions)).size;
   const schedules = active.reduce((count, job) => count + job.expressions.length, 0);
@@ -203,14 +308,14 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
   lines.push(
     twoCol(
       ` void-crons · ${state.appName}`,
-      `${loopLabel} · ${state.tz ? `tz ${state.tz}` : "tz local"} · ${state.storeMode} · ${originLabel(state.origin)}`,
+      `${loopLabel} · tz ${zone} · ${state.storeMode} · ${originLabel(state.origin)}`,
       width,
     ),
   );
   lines.push(
     twoCol(
-      ` ${state.jobs.length} jobs · ${expressions} expr · ${schedules} sched · sort ${state.sort}`,
-      `${manifestNote} · scan ${clock(state.scannedAt)}`,
+      ` ${state.jobs.length} jobs · ${expressions} expr · ${schedules} sched${width >= 100 ? ` · ${state.queues.length} queue(s)` : ""} · sort ${state.sort}`,
+      `${manifestNote} · scan ${clock(state.scannedAt, zone)}`,
       width,
     ),
   );
@@ -220,12 +325,21 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
   const visible = visibleJobs(state);
   const viewport = visible.slice(state.scroll, state.scroll + rows);
   const selectedIndex = state.selected - state.scroll;
+  const blankRows = rows - visible.length;
+  const mugStart = state.filter.length === 0 && visible.length > 0 && width >= 70 && height >= 30 &&
+    blankRows >= COFFEE_MUG.length + 2
+    ? visible.length + Math.floor((blankRows - COFFEE_MUG.length) / 2)
+    : -1;
   for (let i = 0; i < rows; i++) {
     const job = viewport[i];
     if (!job) {
-      if (visible.length === 0 && i === 0) {
+      if (mugStart >= 0 && i >= mugStart && i - mugStart < COFFEE_MUG.length) {
+        lines.push(pad(center(COFFEE_MUG[i - mugStart]!, width), width));
+      } else if (visible.length === 0 && i === 0) {
         const message = state.filter.length > 0 ? ` no jobs match "${state.filter}"` : " no jobs in crons/";
         lines.push(pad(message, width));
+      } else if (visible.length === 0 && i === 1 && state.filter.length === 0) {
+        lines.push(pad(" add a file to crons/ — see void-crons --help", width));
       } else {
         lines.push(" ".repeat(width));
       }
@@ -238,9 +352,11 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
 
   const activityRows = activityRowsForHeight(height);
   if (activityRows > 0) {
-    if (state.detail) {
+    if (state.pane === "queues" && !state.detail) {
+      lines.push(...queuePane(state, width, activityRows, color));
+    } else if (state.detail) {
       lines.push(pad(" Detail · v close", width));
-      const body = detailBody(selectedJob(state), nowMs, width);
+      const body = detailBody(selectedJob(state), nowMs, width, zone);
       for (let i = 0; i < activityRows; i++) lines.push(body[i] ?? " ".repeat(width));
       lines.push(rule(width));
     } else {
@@ -253,7 +369,7 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
       const drift = state.drift.slice(0, activityRows);
       for (const line of drift) lines.push(pad(`  ${line}`, width));
       const entries = state.activity.slice(0, activityRows - drift.length);
-      for (const entry of entries) lines.push(activityRow(entry, width));
+      for (const entry of entries) lines.push(activityRow(entry, width, zone));
       const used = drift.length + entries.length;
       for (let i = used; i < activityRows; i++) lines.push(" ".repeat(width));
       lines.push(rule(width));
@@ -261,6 +377,6 @@ export function render(state: TuiState, nowMs: number, color = state.color): str
   }
 
   lines.push(pad(keysLine(state, width), width));
-  lines.push(statusLine(state, width, nowMs));
+  lines.push(statusLine(state, width, nowMs, color));
   return lines.slice(0, height);
 }

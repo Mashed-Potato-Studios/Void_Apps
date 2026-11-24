@@ -36,13 +36,29 @@ function newestSrcMtime() {
   walk(join(root, "src"));
   return newest;
 }
+// `node:sqlite` is loaded by the activity store at import time. Node warns
+// once about it being experimental; keep that out of the CLI's startup output
+// (including --help/--version) while leaving every other warning untouched.
+async function importQuietly(specifier) {
+  const emit = process.emitWarning;
+  process.emitWarning = function (warning, type, ...rest) {
+    if (String(type).includes("ExperimentalWarning") && String(warning).includes("SQLite")) return;
+    return emit.call(this, warning, type, ...rest);
+  };
+  try {
+    return await import(specifier);
+  } finally {
+    process.emitWarning = emit;
+  }
+}
+
 try {
   // Published packages only ship dist/bin, so the src fallback is only usable
   // from a checkout that also has the test hook.
   const canRunSrc = existsSync(srcEntry) && existsSync(hookEntry);
   const fresh = existsSync(distEntry) && (!canRunSrc || mtime(distEntry) >= newestSrcMtime());
   if (fresh || !canRunSrc) {
-    const { run } = await import("../dist/cli.js");
+    const { run } = await importQuietly("../dist/cli.js");
     process.exitCode = await run(process.argv.slice(2), process.cwd());
   } else {
     // Dev fallback: strip types at runtime instead of rebuilding.
@@ -51,7 +67,7 @@ try {
     }
     const { register } = await import("node:module");
     register("../test/hooks/resolve-ts.mjs", import.meta.url);
-    const { run } = await import("../src/cli.ts");
+    const { run } = await importQuietly("../src/cli.ts");
     process.exitCode = await run(process.argv.slice(2), process.cwd());
   }
 } catch (e) {

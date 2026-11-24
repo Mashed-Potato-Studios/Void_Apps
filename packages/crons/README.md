@@ -1,6 +1,6 @@
 # `void-crons`
 
-![version](https://img.shields.io/badge/version-0.4.0-blue)
+![version](https://img.shields.io/badge/version-0.5.0-blue)
 ![node](https://img.shields.io/badge/node-%3E%3D22.6-339933?logo=node.js&logoColor=white)
 ![type](https://img.shields.io/badge/module-ESM-yellow)
 ![license](https://img.shields.io/badge/license-MIT-green)
@@ -50,8 +50,10 @@ void-crons ui                                   # interactive dashboard
 - [Manifest & drift](#manifest--drift)
 - [Activity history](#activity-history)
 - [Library API](#library-api)
+- [Queues (scan & dev dispatch)](#queues-scan--dev-dispatch)
 - [React panel](#react-panel)
 - [Worker runtime instrumentation](#worker-runtime-instrumentation)
+- [Runtime-neutral adapters](#runtime-neutral-adapters)
 - [Worker-safe adapters](#worker-safe-adapters)
 - [Integration boundaries and evidence](#integration-boundaries-and-evidence)
 - [Troubleshooting](#troubleshooting)
@@ -135,6 +137,23 @@ void-crons schedule --once
 # your-app: caught up (0 fired, 1 skipped)
 ```
 
+### First run
+
+`void-crons` with no arguments runs `list`. From a fresh app with an empty
+`crons/`, it prints a starter job and the next three commands instead of a bare
+`0 job(s)`. Discovery is built in:
+
+```bash
+void-crons --help              # top-level help + quick start (exit 0)
+void-crons --version           # prints void-crons 0.5.0 (exit 0)
+void-crons list --help         # focused help for one command
+void-crons help trigger        # same, via the help command
+```
+
+Human-readable output is colorized on a TTY and plain when piped. `NO_COLOR`
+disables it; `FORCE_COLOR` enables it; `--color` / `--no-color` override both.
+`--json` output is always ANSI-free.
+
 ## CLI reference
 
 Runs per-app. `[app-path]` is the directory containing a supported Void config and
@@ -145,6 +164,9 @@ app path (`void-crons trigger cleanup path/to/your-app`).
 | Command | What it does | Non-zero exit |
 |---|---|---|
 | `list [app-path] [--tz Z]` | Scanned jobs, `next in Xm` previews, activity tail. `--json` adds `nextFireMs` per active job | `1` if any job invalid |
+| `next <expr\|job> [app-path] [--count N] [--tz Z]` | Print the next N fire times (UTC by default). Accepts a literal expression or a scanned job | `1` unknown job · `2` usage/invalid expression |
+| `queues [app-path] [--json]` | Scan and validate `queues/` consumers: names, options, duplicates | `1` invalid definition |
+| `queue-send <queue> [app-path] [--body JSON] [--count N]` | POST one batch to the local `/__void/queue` dev endpoint | `1` dispatch failed · `2` usage |
 | `ui [app-path] [--tz Z] [--store MODE] [--origin URL]` | Interactive TUI: jobs, countdowns, drift, activity; trigger/toggle/emit/catch-up | `2` if not a TTY or `--json`/`--all` used |
 | `check [app-path] [--limits managed\|none]` | Invalid jobs, selected quota profile, manifest drift (skip drift with `--no-drift`) | `1` problems/drift · `2` tool error |
 | `doctor [app-path] [--json] [--all] [--evidence FILE]` | Reports config, resolved SDK version/contract, unknown bindings, production-trigger evidence, local manifest role | `2` tool error |
@@ -170,6 +192,8 @@ Exit codes: `0` clean · `1` drift / invalid / failed fire · `2` tool, usage, o
 | `--allow-remote-bindings` | off | Explicit consent when binding mode is declared `remote`, even on loopback |
 | `--limits PROFILE` | `managed` | `check`: enforce 100 expressions/1000 schedules, or `none` to check external quotas separately |
 | `--tz ZONE` | UTC | IANA zone (`America/New_York`) for previews + schedule windows |
+| `--count N` | `5` | `next`: upcoming fires (cap 50) · `queue-send`: messages per batch (cap 100) |
+| `--body JSON` | `{}` | `queue-send`: the body to place on every message in the batch |
 | `--retries N` | `0` | Retry 408 / 425 / 429 / 5xx / network failures; 500ms doubling backoff; other 4xx are final |
 | `--timeout MS` | `10000` | Per-attempt HTTP timeout (abort) |
 | `--store MODE` | `sqlite` | `sqlite` (WAL) or `jsonl` (legacy file) activity backend |
@@ -177,6 +201,9 @@ Exit codes: `0` clean · `1` drift / invalid / failed fire · `2` tool, usage, o
 | `--all` | — | Run across `apps/*` (live `schedule` still needs one app; use `--all --once` for batch catch-up) |
 | `--ci` | — | Quiet on success |
 | `--no-drift` | — | `check` skips manifest comparison |
+| `--help`, `-h` | — | Print top-level help, or `<command> --help` for one command; exit `0` |
+| `--version`, `-v` | — | Print `void-crons <version>`; exit `0` |
+| `--color`, `--no-color` | TTY | Force or disable ANSI color in human-readable output (`--json` stays plain) |
 
 `--json` shapes: `check` prints `{app, ok, format, problems, drift}` with problems or
 `{app, ok, format, jobs, expressions, schedules}` when clean;
@@ -188,8 +215,15 @@ directly (Node type-stripping) with a stderr note — it never silently runs sta
 
 ## TUI
 
+Live against the Crew Coffee API (5 crons, 1 queue, dispatch acknowledged):
+
+![void-crons TUI showing coffee-api jobs, queue count, and activity](https://raw.githubusercontent.com/Mashed-Potato-Studios/Void_Apps/main/packages/crons/docs/tui-coffee-api.png)
+
 Start it **from the app directory** — the one containing a supported Void config and
-`crons/`. No path argument needed; it uses the current directory:
+`crons/`. No path argument needed; it uses the current directory. Pass `--origin`
+if the app's dev server is not on the default `http://localhost:5173`
+(for example, the coffee API uses `http://localhost:5175`), otherwise triggers
+fail with a transport error that now names the origin it tried:
 
 ```bash
 cd path/to/your-app
@@ -209,7 +243,7 @@ One app, live in the terminal. Countdowns tick every second; manifest state and
 activity refresh after every action.
 
 ```text
- void-crons · api                                         loop off · tz local · jsonl · localhost:5173
+ void-crons · api                                         loop off · tz UTC · jsonl · localhost:5173
  3 jobs · 4 expr · 4 sched · sort next                                  manifest clean · scan 12:49:03
 ──────────────────────────────────────────────────────────────────────────────────────────────────────
  ● heartbeat        * * * * *                        next <2m       last ok 1m
@@ -224,13 +258,15 @@ activity refresh after every action.
   ↳ 10:48 heartbeat * * * * * ok 21ms
 
 ──────────────────────────────────────────────────────────────────────────────────────────────────────
- ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · r · q
+ ↑↓ move · ↵ trigger · d toggle · e emit · c catch-up · s live · / filter · o sort · v detail · ? help · r · q
  status: ready
 ```
 
 | Key | Action |
 |---|---|
 | `↑` / `↓`, `j` / `k` | Move selection |
+| `PgUp` / `PgDn` | Page through the job list |
+| `g` / `G` | Jump to first / last job |
 | `enter` | Trigger the selected job (all its expressions) |
 | `d` | Toggle enabled/disabled for this session |
 | `e` | Emit `void.crons.json` — the only action that persists toggles |
@@ -239,6 +275,8 @@ activity refresh after every action.
 | `/` | Filter by name, path, or expression; `enter` applies, `esc` clears |
 | `o` | Cycle sort: next fire → name → status |
 | `v` | Toggle the job detail pane |
+| `Q` | Toggle the queues pane in the same TUI (`↵` sends to the selected queue) |
+| `?` / `F1` | Toggle the in-terminal help overlay (`esc` also closes) |
 | `r` | Rescan jobs, manifest, drift, and activity |
 | `q` / `Ctrl-C` | Quit and restore the terminal |
 
@@ -249,6 +287,18 @@ take effect on the next tick. The TUI also watches `crons/` and
 
 `v` opens a detail pane with the job path, expressions, wrapper, last run, and
 error. `/` filters the visible list without affecting what the live loop fires.
+On tall terminals the activity pane grows and unused space is filled with a
+small coffee-mug mark instead of dead rows. Without a dev token the status line
+shows `no dev token`, and 401 rejections explain how to pass `--token` or set
+`VOID_DEV_TRIGGER`.
+
+The header zone matches previews: `tz UTC` by default, or the IANA zone passed
+with `--tz`; scan and activity timestamps render in that same zone. `Q` swaps
+the lower pane from activity/drift to the app's scanned `queues/` (names, paths,
+consumer options); selection and the live loop stay on the cron jobs. Pressing
+`↵` in the queues pane dispatches one demo message to the selected queue using
+the same origin/token as cron dispatch — it needs a running dev server and its
+trigger token.
 
 Toggles are session-only until `e`. `ui` is single-app and interactive:
 `--json` and `--all` are rejected, and non-TTY stdin/stdout exits `2`.
@@ -346,6 +396,22 @@ void-crons list path/to/your-app --tz Pacific/Kiritimati
 (`scheduled … · tz America/New_York` in the banner). Unknown zones exit 2 with
 the offending name echoed. `check`/`emit` are zone-independent (they compare
 expression sets, never fire times).
+
+### Next fire previews
+
+`next` prints upcoming UTC fire times for a literal expression or a scanned job:
+
+```bash
+void-crons next "0 9 * * MON" --count 3
+# 0 9 * * MON · next 3 fire(s) (UTC)
+#     2026-11-23T09:00:00.000Z
+#     ...
+void-crons next cleanup path/to/your-app --tz America/New_York --json
+```
+
+Same evaluator as `list`/`schedule`: Quartz `LW`/`15W`/`L-3` forms work, and
+impossible dates (Feb 30) report `never` instead of throwing. The library
+equivalent is `nextFires(expr, count, { tz, fromMs })`.
 
 ## Delivery: retries, timeouts, exit codes
 
@@ -490,11 +556,16 @@ import {
   triggerExpression,  // one fire → { ok, entry, httpStatus, attempts, retried }
   triggerJob,         // every expression a job exports (skips disabled/invalid)
   computeDue,         // due times in [fromMs, toMs], sorted ({ tz } aware)
+  nextDue,            // first due time per expression in a window ({ tz } aware)
+  nextFires,          // next N fire timestamps for one expression ({ tz, fromMs } aware)
   latestDue,          // most-recent due per expression (catch-up)
   runScheduleOnce,    // trailing-24h catch-up → { fired, skipped }
   tickSchedule,       // one live-loop window (per-expr once-per-minute)
   startScheduleLoop,  // 30s-tick live loop (opts.intervalMs/signal for tests)
   isValidTimezone, assertValidTimezone,
+  createPlatform,     // injectable host capabilities (clock, ids, fetch, timers)
+  fixedPlatform,      // deterministic platform for tests and replay
+  createMemoryLedgerStore, // portable CronRunStore + CronLedgerStore
   createCronStore,    // synchronous in-memory activity/toggles, not CronRunStore
   appendActivityLog, readActivityLog, pruneActivityLog,
 } from "void-crons";
@@ -505,6 +576,71 @@ import {
 and fan out server-side). The root `void-crons` entry is **Node-only**, importing
 filesystem and Node SQLite code. Do not import it into a Worker or browser;
 use `void-crons/runtime` for Worker handler instrumentation.
+
+## Queues (scan & dev dispatch)
+
+Void's [Queues guide](https://void.cloud/guide/queues) defines consumers in
+`queues/**/*.{ts,mts,js,mjs}`. This package does not create queues or own their
+bindings, but it can statically inspect that directory and dispatch a manual
+batch to the local dev endpoint:
+
+```bash
+void-crons queues path/to/app
+# api: 2 queue(s), 2 active
+#   ● emails      queues/emails.ts       maxBatchSize=50 maxConcurrency=2
+#   ● order-notes queues/order/notes.ts
+
+void-crons queue-send emails path/to/app \
+  --body '{"to":"a@b.c","subject":"Hi"}' --count 2
+# api: dispatched emails (2 message(s), 18ms, attempts 1)
+```
+
+Scanned names follow the guide: nested paths join with `-`
+(`queues/order/notes.ts` → `order-notes`), leading `_` files/directories are
+ignored, and names must be 1–63 characters of letters, digits, and `-`,
+starting and ending alphanumeric. Note the 63-character limit applies to the
+**full Cloudflare queue name** (Worker name included), which this local scanner
+cannot know.
+
+Consumer options are read as whole-number literal exports only — computed
+values and re-exports are reported as invalid, as in the guide:
+
+| Option | Accepted values | Guide default |
+|---|---|---|
+| `maxBatchSize` | `>= 1` | `10` |
+| `maxBatchTimeout` | `>= 0` seconds | `5` |
+| `maxConcurrency` | `1–250` | Cloudflare automatic |
+| `maxRetries` | `>= 0` | `3` |
+| `retryDelay` | `>= 0` seconds | `0` |
+
+Void-managed queues require platform `1.10.0` or later, support one consumer
+per Cloudflare queue, and configure no dead-letter queue — Cloudflare permanently
+deletes messages that exhaust retries. Deploy, not this scanner, reports naming
+and consumer conflicts.
+
+`queue-send` posts `{ queue, messages: [{ id, timestamp, body, attempts }] }` to
+`POST {origin}/__void/queue` with `x-void-dev-trigger` from `--token` /
+`$VOID_DEV_TRIGGER`. It accepts only an exact loopback origin; remote delivery
+is the platform's job, not a local HTTP endpoint. HTTP acknowledgement is not
+proof that a handler succeeded — `ack()` / `retry()` remain application-owned.
+`--retries` and `--timeout` behave as they do for cron dispatch.
+
+Library entry points:
+
+```ts
+import { scanQueueFiles, validateQueueName } from "void-crons/queue-scan";
+import { sendQueueBatch, resolveQueueTarget } from "void-crons/queue-send";
+
+scanQueueFiles(appRoot);      // QueueDefinition[] — status + parsed options
+validateQueueName("emails");  // string | null — grammar problem
+sendQueueBatch("emails", [{ body: { to: "a@b.c" } }], {
+  origin: "http://localhost:5173",
+  devToken: process.env.VOID_DEV_TRIGGER,
+});
+```
+
+These scan/dispatch helpers are Node-only. For the cron → queue correlation
+adapter (`void-crons/queue`), see [Worker-safe adapters](#worker-safe-adapters).
 
 ## React panel
 
@@ -595,7 +731,7 @@ for version-pinned SDK contracts and unverified deployment boundaries. Historica
 test counts there are not a current test badge.
 
 The runtime does not provision resources or install adapters automatically.
-The optional Worker-safe adapters are app-owned boundaries:
+The optional runtime-neutral adapters are app-owned boundaries:
 
 - `void-crons/d1` — D1 ledger adapter with idempotent inserts, query APIs, and
   retention. Copy `migrations/0001_cron_runs.sql` into the consuming app.
@@ -610,9 +746,50 @@ These adapters still require the consuming app's bindings, authorization,
 idempotency, migrations, and separate native/framework verification. The
 package does not install them, own their data, or prove deployed behavior.
 
+## Runtime-neutral adapters
+
+Every portable adapter subpath (`/runtime`, `/d1`, `/queue`, `/durable`,
+`/live`, `/queue-send`, `/platform`, `/memory`) avoids `node:` imports, `process`,
+and filesystem access. They import cleanly in Workers, Node, Deno, Bun, browsers,
+and test VMs.
+
+Host capabilities live behind one injectable interface:
+
+```ts
+import { createPlatform, fixedPlatform } from "void-crons/platform";
+import { createMemoryLedgerStore } from "void-crons/memory";
+import { instrumentScheduled } from "void-crons/runtime";
+
+// Defaults resolve lazily from host globals (Date.now, crypto, fetch, timers).
+const platform = createPlatform();
+const store = createMemoryLedgerStore({ platform, maxEvents: 200 });
+
+export default instrumentScheduled("cleanup", cleanup, { store, platform });
+
+// Tests / replay: deterministic clock, ids, fetch, and sleep.
+const testPlatform = fixedPlatform({ now: 1_000, ids: ["run-1"] });
+```
+
+`CronPlatform` exposes `now()`, `newId()`, `sleep(ms)`, `fetch(url, init)`, and
+`createAbortController()`. Override any subset with `createPlatform({ ... })`;
+`linkAbortSignal(platform, external)` bridges a caller-owned signal without
+requiring `AbortSignal.any`. `newId()` is a correlation handle, not a secret —
+when `crypto.randomUUID` is absent a timestamp/random fallback is used.
+
+`createMemoryLedgerStore()` implements `CronRunStore` + `CronLedgerStore` with
+idempotent inserts, redacted error summaries, bounded newest-first queries, and
+no durable storage. Use it where SQLite/D1 is unavailable: local scripts, tests,
+edge runtimes, or a process-local fallback. It never replaces an authoritative
+persistent store.
+
+`/runtime`, `/durable`, `/d1`, `/queue`, and `/queue-send` also accept a
+`platform` option; their older per-capability options (`now`, `createId`,
+`fetchImpl`, `sleepImpl`) still take precedence for backward compatibility.
+The root `void-crons` entry remains Node-only.
+
 ## Worker-safe adapters
 
-All four adapter subpaths avoid `node:` imports and can be bundled for a Worker.
+The adapter subpaths above avoid `node:` imports and can be bundled for a Worker.
 They are exported separately from the Node-only root entry.
 
 ### D1 ledger (`void-crons/d1`)
@@ -760,3 +937,9 @@ denies by default when authorization fails or throws.
 - Impossible-but-parseable dates (Feb 30) never fire rather than erroring.
 - The live loop is a 30s-tick dev firer: no persistence across restarts, no
   backpressure, `Ctrl-C` exits 0.
+- `queues` and `queue-send` are local dev tools: no deploy config, no binding
+  ownership, and no production enqueue. The scanner cannot know the Worker
+  name that counts toward Cloudflare's 63-character queue-name limit, and
+  HTTP acknowledgement is not consumer success.
+- Void-managed queues have no dead-letter queue; exhausted messages are deleted
+  by Cloudflare. `ack()` / `retry()` policy and idempotency stay app-owned.

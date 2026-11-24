@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import { detectDrift, readCronManifest } from "../manifest.js";
 import { scanCronFiles } from "../scan.js";
 import { nextDue } from "../schedule.js";
+import { scanQueueFiles } from "../queue-scan.js";
 import { readActivityLog, type ActivityStoreMode } from "../store.js";
 import type { CronActivityEntry, CronJob } from "../types.js";
 import type { JobView, ManifestState, Snapshot } from "./model.js";
@@ -54,5 +55,6 @@ export function loadSnapshot(appPath: string, opts: SnapshotOptions = {}): Snaps
     activity,
     disabled: [...disabled].sort(),
     scannedAt: nowMs,
+    queues: scanQueueFiles(appPath),
   };
 }

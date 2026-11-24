@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { computeDue, latestDue, runScheduleOnce } from "../src/schedule.ts";
+import { computeDue, latestDue, nextFires, runScheduleOnce } from "../src/schedule.ts";
 import { readActivityLog } from "../src/store.ts";
 
 describe("computeDue", () => {
@@ -32,6 +32,38 @@ describe("computeDue", () => {
     // '0 0 31 6,4 *' parses (31 days in Apr/Jun impossible → parser loop throws lazily)
     assert.doesNotThrow(() => computeDue(["0 0 31 6,4 *"], Date.UTC(2026, 0, 1), Date.UTC(2027, 0, 1)));
     assert.deepEqual(computeDue(["0 0 31 6,4 *"], Date.UTC(2026, 0, 1), Date.UTC(2027, 0, 1)), []);
+  });
+});
+
+describe("nextFires", () => {
+  const from = Date.UTC(2026, 9, 18, 10, 0, 0);
+
+  it("returns the next N strictly increasing fire times", () => {
+    const fires = nextFires("*/5 * * * *", 4, { fromMs: from });
+    assert.deepEqual(fires.map((ms) => new Date(ms).toISOString().slice(11, 16)), ["10:05", "10:10", "10:15", "10:20"]);
+    assert.ok(fires.every((ms, i) => i === 0 || ms > fires[i - 1]!));
+  });
+
+  it("expands the window for rare yearly forms", () => {
+    const fires = nextFires("0 0 1 1 *", 2, { fromMs: from });
+    assert.equal(fires.length, 2);
+    assert.deepEqual(fires.map((ms) => new Date(ms).toISOString().slice(0, 10)), ["2027-01-01", "2028-01-01"]);
+  });
+
+  it("supports Quartz extended forms without throwing", () => {
+    const fires = nextFires("0 0 LW * *", 2, { fromMs: from });
+    assert.equal(fires.length, 2);
+    assert.ok(new Date(fires[0]!).toISOString().startsWith("2026-10-"));
+  });
+
+  it("returns none for impossible dates and caps the requested count", () => {
+    assert.deepEqual(nextFires("0 0 30 2 *", 3, { fromMs: from }), []);
+    assert.equal(nextFires("* * * * *", 999, { fromMs: from }).length, 50);
+  });
+
+  it("previews in the requested timezone", () => {
+    const fires = nextFires("0 9 * * *", 1, { fromMs: from, tz: "America/New_York" });
+    assert.equal(new Date(fires[0]!).toISOString(), "2026-10-18T13:00:00.000Z");
   });
 });
 
